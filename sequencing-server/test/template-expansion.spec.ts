@@ -695,7 +695,7 @@ CMD SEQUENCE=FINAL_B AT=2020-001/00:00:30.030`) // expect interleaving!
   describe('Plaintext sequences', () => {
     let language = 'TEXT';
 
-    it.only('should format dates and simply concatenate strings', async () => {
+    it('should format dates and simply concatenate strings', async () => {
       let seqId = 'TextSequenceMerge';
 
       await insertSequenceTemplate(

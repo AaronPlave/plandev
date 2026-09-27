@@ -1,4 +1,5 @@
 import { gql, GraphQLClient } from 'graphql-request';
+import http from 'node:http';
 import fetch from 'node-fetch';
 
 export type GenerationSelectionInput =
@@ -198,6 +199,8 @@ export async function runSql(sql: string): Promise<{ result_type: string; result
       'x-hasura-admin-secret': process.env['HASURA_GRAPHQL_ADMIN_SECRET'] as string,
     },
     body: JSON.stringify({ type: 'run_sql', args: { source: 'PlanDev', sql } }),
+    // A fresh connection per call: a reused keep-alive socket can be closed by Hasura between calls.
+    agent: new http.Agent({ keepAlive: false }),
   });
   const body = (await response.json()) as any;
   if (!response.ok) {
