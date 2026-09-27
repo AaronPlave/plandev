@@ -35,6 +35,8 @@ export const ENDPOINTS_WHITELIST = new Set([
 const ENDPOINTS_TO_ACTION_KEY: Record<string, string> = {
   '/command-expansion/expand-all-sequence-templates': 'expand_all_templates',
   '/command-expansion/assign-activities-by-filter': 'assign_activities_by_filter',
+  '/sequence-generation/generate': 'generate_sequence',
+  '/sequence-generation/preflight': 'generate_sequence',
 };
 
 /**
@@ -254,7 +256,7 @@ async function isPlanCollaborator(
       { planId, username },
     );
 
-    return planCollaborator !== null;
+    return planCollaborator.plan_collaborators_by_pk !== null;
   } else if (missionModelId !== undefined) {
     const planCollaborator = await graphqlClient.request<{
       mission_model_by_pk: { plans: { collaborators: { collaborator: string | null } }[] };

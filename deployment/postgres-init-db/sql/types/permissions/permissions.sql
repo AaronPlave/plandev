@@ -33,6 +33,7 @@ create type permissions.action_permission_key
     'create_expansion_set',
     'expand_all_activities',
     'expand_all_templates',
+    'generate_sequence',
     'insert_ext_dataset',
     'resource_samples',
     'schedule',

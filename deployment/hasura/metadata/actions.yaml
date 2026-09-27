@@ -47,6 +47,22 @@ actions:
     permissions:
       - role: aerie_admin
       - role: user
+  - name: generateSequence
+    definition:
+      kind: synchronous
+      handler: "{{PLANDEV_SEQUENCING_URL}}/sequence-generation/generate"
+      timeout: 300
+    permissions:
+      - role: aerie_admin
+      - role: user
+  - name: generateSequencePreflight
+    definition:
+      kind: ""
+      handler: "{{PLANDEV_SEQUENCING_URL}}/sequence-generation/preflight"
+      timeout: 300
+    permissions:
+      - role: aerie_admin
+      - role: user
   - name: getModelEffectiveArguments
     definition:
       kind: ""

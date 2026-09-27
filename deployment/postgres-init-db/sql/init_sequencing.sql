@@ -26,6 +26,8 @@ begin;
   \ir tables/sequencing/sequence_filter.sql
   \ir tables/sequencing/sequence_template.sql
   \ir tables/sequencing/expanded_templates.sql
+  \ir tables/sequencing/generation.sql
+  \ir tables/sequencing/generated_product.sql
 
   -- Views
   \ir views/sequencing/expansion_set_rule_view.sql

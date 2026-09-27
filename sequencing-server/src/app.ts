@@ -14,6 +14,7 @@ import { processDictionary } from './lib/codegen/CommandTypeCodegen.js';
 import './polyfills.js';
 import getLogger from './utils/logger.js';
 import { commandExpansionRouter } from './routes/command-expansion.js';
+import { sequenceGenerationRouter } from './routes/sequence-generation.js';
 import { getHasuraSession, canUserPerformAction, ENDPOINTS_WHITELIST } from './utils/hasura.js';
 import { PluginManager } from './utils/PluginManager.js';
 import { DictionaryType } from './types/types.js';
@@ -116,6 +117,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use('/command-expansion', commandExpansionRouter);
+app.use('/sequence-generation', sequenceGenerationRouter);
 
 app.get('/', (_: Request, res: Response) => {
   res.send('Aerie Sequencing Service');

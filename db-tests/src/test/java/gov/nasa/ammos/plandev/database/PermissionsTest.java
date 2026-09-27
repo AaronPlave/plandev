@@ -1083,6 +1083,7 @@ public class PermissionsTest {
                 "expand_all_activities": "NO_CHECK",
                 "expand_all_templates": "NO_CHECK",
                 "assign_activities_by_filter": "NO_CHECK",
+                "generate_sequence": "PLAN_OWNER_COLLABORATOR",
                 "insert_ext_dataset": "PLAN_OWNER",
                 "resource_samples": "NO_CHECK",
                 "schedule":"PLAN_OWNER_COLLABORATOR",

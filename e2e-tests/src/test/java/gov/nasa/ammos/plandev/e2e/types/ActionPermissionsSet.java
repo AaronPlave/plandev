@@ -13,6 +13,7 @@ public record ActionPermissionsSet(Map<ActionKey, Permission> permissions){
       expand_all_activities,
       expand_all_templates,
       assign_activities_by_filter,
+      generate_sequence,
       insert_ext_dataset,
       resource_samples,
       schedule,

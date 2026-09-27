@@ -48,6 +48,26 @@ type Mutation {
   ): ExpandAllSequencesResponse
 }
 
+type Mutation {
+  generateSequence(
+    planId: Int!,
+    simulationDatasetId: Int,
+    sequenceId: String!,
+    selection: GenerateSequenceSelection!,
+    metadata: json
+  ): GenerateSequenceResponse
+}
+
+type Query {
+  generateSequencePreflight(
+    planId: Int!,
+    simulationDatasetId: Int,
+    sequenceId: String!,
+    selection: GenerateSequenceSelection!,
+    metadata: json
+  ): GenerateSequencePreflightResponse
+}
+
 type Query {
   getModelEffectiveArguments(missionModelId: Int!, modelArguments: ModelArguments!): EffectiveArgumentsResponse
 }
@@ -223,6 +243,28 @@ type AssignActivitiesByFilterResponse {
 type ExpandAllSequencesResponse {
   success: Boolean!
   expandedSequencesBySeqId: json!
+}
+
+input GenerateSequenceSelection {
+  type: String!
+  ids: [Int!]
+  filterId: Int
+  timeRangeStart: String
+  timeRangeEnd: String
+}
+
+type GenerateSequenceResponse {
+  generationId: Int!
+  status: String!
+  generatedProductIds: [Int!]!
+  diagnostics: json!
+}
+
+type GenerateSequencePreflightResponse {
+  ok: Boolean!
+  diagnostics: json!
+  source: json
+  expansion: json
 }
 
 type UserCodeError implements Error {

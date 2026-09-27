@@ -1,0 +1,26 @@
+table:
+  name: generated_product
+  schema: sequencing
+configuration:
+  custom_name: "generated_product"
+object_relationships:
+  - name: generation
+    using:
+      foreign_key_constraint_on: generation_id
+# Generated products are created only by the sequencing server (generateSequence action) and are immutable.
+select_permissions:
+  - role: aerie_admin
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: user
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
