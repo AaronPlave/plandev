@@ -297,6 +297,33 @@ describe('sequence generation', () => {
     expect(result.diagnostics[0]).toMatchObject({ code: 'SIMULATION_NOT_COMPLETE' });
   });
 
+  it('rejects a simulation dataset from another plan without recording a generation', async () => {
+    await insertGrowAndBakeTemplates();
+    const growId = await insertActivityDirective(graphqlClient, planId, 'GrowBanana');
+    await executeSimulation(graphqlClient, planId);
+    const otherPlanId = await createPlan(graphqlClient, missionModelId);
+    try {
+      await updateSimulationBounds(graphqlClient, {
+        plan_id: otherPlanId,
+        simulation_start_time: '2020-001T00:00:00Z',
+        simulation_end_time: '2020-002T00:00:00Z',
+      });
+      const other = await executeSimulation(graphqlClient, otherPlanId);
+
+      await expect(
+        generateSequence(graphqlClient, {
+          planId,
+          simulationDatasetId: other.simulationDatasetId,
+          sequenceId: 'MISMATCH',
+          selection: { type: 'activity-directives', ids: [growId] },
+        }),
+      ).rejects.toThrow();
+      expect(await getGenerationsForPlan(graphqlClient, planId)).toEqual([]);
+    } finally {
+      await removePlan(graphqlClient, otherPlanId);
+    }
+  });
+
   it('expands only the top-level simulated activity of a selected directive', async () => {
     await insertSequenceTemplate(graphqlClient, 'parent.tpl', parcelId, missionModelId, 'parent', STOL, 'CMD PARENT');
     const parentId = await insertActivityDirective(graphqlClient, planId, 'parent');

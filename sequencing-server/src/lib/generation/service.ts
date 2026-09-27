@@ -132,6 +132,22 @@ export async function generateSequence(
     metadata: request.metadata ?? {},
   };
 
+  // Permissions are checked against the plan of simulationDatasetId when one is given, so a mismatched
+  // plan/simulation pair is rejected outright rather than recorded as a Generation of `planId`.
+  if (request.simulationDatasetId !== undefined && request.simulationDatasetId !== null) {
+    const { rows } = await db.query(
+      `select s.plan_id from merlin.simulation_dataset sd join merlin.simulation s on s.id = sd.simulation_id
+        where sd.id = $1`,
+      [request.simulationDatasetId],
+    );
+    if (rows[0] !== undefined && rows[0].plan_id !== request.planId) {
+      throw Object.assign(
+        new Error(`Simulation dataset ${request.simulationDatasetId} does not belong to plan ${request.planId}.`),
+        { status: 400 },
+      );
+    }
+  }
+
   const generationId: number = (
     await db.query(
       // simulation_dataset_id is set once the source is resolved; the requested one is in the request snapshot.
