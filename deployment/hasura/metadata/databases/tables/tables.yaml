@@ -94,6 +94,7 @@
 - "!include merlin/dataset/profile.yaml"
 - "!include merlin/dataset/profile_segment.yaml"
 - "!include merlin/dataset/resource_profile_view.yaml"
+- "!include merlin/dataset/standalone_dataset.yaml"
 
 # Simulation
 - "!include merlin/simulation/simulation_template.yaml"
