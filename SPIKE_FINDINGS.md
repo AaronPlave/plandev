@@ -13,7 +13,7 @@ The timeline renderer itself did not need rewriting. Nearly every coupling found
 | | Branch |
 |---|---|
 | Backend | `AaronPlave/plandev` @ `claude/hopeful-cannon-cki37d` (from `develop`) |
-| UI | `AaronPlave/aerie-ui` @ `claude/hopeful-cannon-cki37d` (from `NASA-AMMOS/plandev-ui` `develop` @ `5520951`, v4.4.0) |
+| UI | `AaronPlave/plandev-ui` @ `claude/hopeful-cannon-cki37d` (from `NASA-AMMOS/plandev-ui` `develop` @ `5520951`, v4.4.0) |
 
 All spike code is marked `SPIKE`.
 
@@ -51,7 +51,7 @@ All spike code is marked `SPIKE`.
   - `db-tests/.../StandaloneDatasetTests.java`: 9 tests.
   - `deployment/spike/standalone_dataset_lifecycle_check.sql`: a psql-only equivalent that rolls back.
 
-### UI (aerie-ui)
+### UI (plandev-ui)
 
 - **The seam: `TimelineResourceProvider`** (`src/types/timelineSource.ts`).
 
