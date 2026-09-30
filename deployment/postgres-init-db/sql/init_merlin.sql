@@ -56,9 +56,6 @@ begin;
   -- External Datasets
   \ir tables/merlin/plan_dataset.sql
 
-  -- Standalone Datasets (SPIKE)
-  \ir tables/merlin/dataset/standalone_dataset.sql
-
   -- Constraints
   \ir tables/merlin/constraints/constraint_metadata.sql
   \ir tables/merlin/constraints/constraint_definition.sql
