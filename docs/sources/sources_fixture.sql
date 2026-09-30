@@ -10,7 +10,8 @@
 --   (same name + same schema, same name + different unit, same name + different schema family)
 -- External events (derivation groups linked to the plan):
 --   "DSN Passes"   (source type DSN)       two sources, event types Pass / Handover
---   "Backup Passes" (source type DSN)      one source,  event type Pass (same type in another group)
+--   "Backup Passes" (source type DSN)      two sources, event type Pass (same type in another group;
+--                                          its dsn_week1.json has the same key as a DSN Passes source)
 --   "Eclipses"     (source type Ephemeris) one source,  event type Eclipse
 do $$
 declare
@@ -72,6 +73,7 @@ begin
     ('dsn_week1.json', 'DSN', 'DSN Passes', '2028-12-30Z', '2029-01-01Z', '2029-01-06Z'),
     ('dsn_week2.json', 'DSN', 'DSN Passes', '2028-12-31Z', '2029-01-06Z', '2029-01-11Z'),
     ('backup.json', 'DSN', 'Backup Passes', '2028-12-30Z', '2029-01-01Z', '2029-01-11Z'),
+    ('dsn_week1.json', 'DSN', 'Backup Passes', '2028-12-31Z', '2029-01-01Z', '2029-01-11Z'),
     ('eclipses.json', 'Ephemeris', 'Eclipses', '2028-12-30Z', '2029-01-01Z', '2029-01-11Z');
   insert into merlin.external_event (key, event_type_name, source_key, derivation_group_name, start_time, duration) values
     ('pass-1', 'Pass', 'dsn_week1.json', 'DSN Passes', '2029-01-01T06:00Z', '4h'),
@@ -79,6 +81,7 @@ begin
     ('handover-1', 'Handover', 'dsn_week1.json', 'DSN Passes', '2029-01-03T10:00Z', '30m'),
     ('pass-3', 'Pass', 'dsn_week2.json', 'DSN Passes', '2029-01-07T06:00Z', '4h'),
     ('backup-pass-1', 'Pass', 'backup.json', 'Backup Passes', '2029-01-04T18:00Z', '3h'),
+    ('backup-pass-2', 'Pass', 'dsn_week1.json', 'Backup Passes', '2029-01-08T18:00Z', '3h'),
     ('eclipse-1', 'Eclipse', 'eclipses.json', 'Eclipses', '2029-01-02T12:00Z', '90m'),
     ('eclipse-2', 'Eclipse', 'eclipses.json', 'Eclipses', '2029-01-05T12:00Z', '90m');
   insert into merlin.plan_derivation_group (plan_id, derivation_group_name) values

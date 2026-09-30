@@ -23,6 +23,8 @@ It adds no tables. The spike code was reverted on both branches and rebuilt, not
   | `68e1675` | Phase 4 fix: external-event layers keep the scope of the Sources leaf (§5); per-group loading |
   | `8619ba6` | Phase 4 fix: rebinding a resource layer re-derives its presentation (§4) |
   | `3deee3a` | Phase 4 fix: new resource layers are always source-bound (§3) |
+  | `255a15e` | Phase 4 cleanup: horizontal guides during resource rebinding (§4) |
+  | `9a20711` | Phase 4 cleanup: event row names include the derivation group (§5) |
 
 - **Backend** (`plandev`, same branch):
   - `5a1431a7`: `merlin.delete_partitions()` search_path fix (migration 38);
@@ -128,6 +130,12 @@ Legacy event layers (type filters only) still show the type from every visible l
 3. **Chart type.** Within the same schema family it keeps the layer's styling (colour, width, and a user-chosen line/x-range). If the new resource is discrete, a line layer becomes an x-range. If a numeric resource replaces a discrete one, an x-range becomes a line. Conversion builds the layer with the same creators as `createTimelineResourceLayer`.
 4. **Axis.** The layer's own axis (`layer.yAxisId`) is updated in place: its label always; its tick count, fit mode and scale domain are reset unless family and unit are unchanged. If sibling layers share the axis, it is left untouched for them and the layer gets a new axis.
 5. **Missing resource.** If the new source lacks the resource, the selection is cleared and the axis waits until a resource is chosen.
+6. **Horizontal guides.** Guides reference an axis by `yAxisId` and hold a raw `y`, so they are part of the decision. A guide is kept only when the axis still measures the same quantity: the previous and new resource have the **same name, schema family and unit** (Dataset A `/battery/soc` real % → Dataset B `/battery/soc` real %). There is no other inference; two unrelated % resources do not share guides. Otherwise:
+   - **Own axis, incompatible rebind** (`/power` W → kW, real → variant, `/soc` → `/dod`): the axis is updated in place as above, and guides on it are removed, so 500 W never silently becomes 500 kW.
+   - **Own axis, resource cleared:** the axis stays for the next selection, but its guides are removed.
+   - **Shared axis:** the axis and its guides stay as they are for the other layers, and the rebound layer's new axis starts with no guides.
+
+   `rebindResourceLayer` takes and returns `{ layers, yAxes, horizontalGuides }`, keeping the guide decision next to the axis decision. The editor applies all three in one store update through `viewUpdateRowProperties`; `viewUpdateRow` now delegates to it.
 
 Unbound (legacy) layers keep their existing resource-change behavior.
 
@@ -165,7 +173,7 @@ External Events
 - **Combining.** The restriction narrows every other criterion (static and dynamic types, other filters, type subfilters). On its own, it selects every event from those sources.
 - **Absent or empty** keeps the old semantics (any linked source). Legacy layers are unchanged and nothing is migrated.
 - **Merging.** Adding items to an existing layer only merges when the layer's restriction equals the items' (order-insensitive). Otherwise a new layer is created, so a merge can neither widen a layer nor narrow items. This applies to the layer picker and to drops on a row. Merging now keeps a layer's other criteria; it used to replace the whole filter with `static_types`.
-- **Naming.** A new row for a restricted leaf is named `<type> · <source key>`.
+- **Naming.** Source keys are only unique within a derivation group. So a new row for a restricted leaf is named `<type> · <derivation group> / <source key>`, as in the filter builder. For example, `Pass · DSN Passes / dsn_week1.json` and `Pass · Backup Passes / dsn_week1.json` are distinct. A multi-source restriction gets `<type> · N sources`. Type-only items keep the existing default (`Pass`), and saved rows are never renamed.
 - **Filter builder.** `ExternalEventFilterBuilder` has an *External Sources* section. It lists the restriction and lets you remove entries or add any source of a linked group. Every other edit round-trips the field, so an editor interaction never widens the layer back to all sources. The builder's instance count honours the restriction.
 - **Schema.** View schema v4 accepts `external_sources`. v4 is new on this branch, so it was extended rather than bumped.
 
@@ -244,7 +252,7 @@ The Plan source subscribes from the simulation dataset it was built from, so its
 Run on the local stack with plan 2 and `docs/sources/sources_fixture.sql` loaded:
 - Dataset A (50), plan-level: `/battery/soc` ramping 90→30 %, `/thermal/panel`, `/power` (W), `/mode` (real).
 - Dataset B (51), tied to the selected simulation: `/battery/soc` at 55 %, `/power` (kW), `/mode` (variant).
-- Derivation groups: *DSN Passes* (2 sources), *Backup Passes* (Pass in another group) and *Eclipses*.
+- Derivation groups: *DSN Passes* (2 sources), *Backup Passes* (Pass in another group; its `dsn_week1.json` shares a key with a DSN Passes source) and *Eclipses*.
 
 Tested with scripted Chromium runs. The screenshots are in `img/`.
 
@@ -275,6 +283,18 @@ Tested with scripted Chromium runs. The screenshots are in `img/`.
 | Unit tests (`utilities/resourceLayerRebind.test.ts`): `/soc` real % → real % keeps the layer, styling and scale, and relabels the axis. Real W → real kW updates the unit and resets the scale. `/mode` real → variant converts to the layer creation would produce, and back. A shared axis is left alone and the layer gets its own. A resource the source lacks clears the selection. Rebinding to legacy drops `sourceId` | pass |
 | Browser rebinding, then save. Model Resources `/battery/soc` Plan → Dataset 50 → 51: same layer id, colour kept, axis `/battery/soc (%) · Dataset 51`. `/power` 50 → 51: axis `/power (kW) · Dataset 51`, tooltip `0.2 (kW)`. `/mode` 50 → 51: line → x-range, tick count 0, tooltip `SAFE` then `SCIENCE`. The four other rows are byte-identical in the saved definition before and after (`16`) | pass |
 | Missing-source view 8 unchanged (unavailable / has no activities). Plan 1, with no linked groups, shows *No derivation groups are linked to this plan*, not a stuck *Loading…* | pass |
+
+**Final cleanup pass.** View 9 was seeded with guides and a shared-axis row, then edited through the UI and saved.
+
+| Check | Result |
+|---|---|
+| Unit tests (`resourceLayerRebind.test.ts`): same `/soc` % A → B keeps the guide on the same axis. `/power` W → kW removes it and relabels and resets the axis. `/soc` % → `/dod` % removes it. `/mode` real → variant removes it and becomes an x-range. On a shared axis, the axis and guide are kept for the sibling and the rebound layer's new axis has none. A cleared resource removes the guides of an own axis only | pass |
+| Unit tests (`views.test.ts`): *DG A / source-1 / Pass* and *DG B / source-1 / Pass* → `Pass · DG A / source-1` and `Pass · DG B / source-1`. Two sources → `Pass · 2 sources`. Type-only → `Pass` | pass |
+| Browser: `/power` Dataset 50 (W) with a 500 W guide → Dataset 51: axis `/power (kW) · Dataset 51`, guide gone | pass |
+| Browser: `/battery/soc` Dataset 51 → 50 (both real %) with a 50 % guide: guide kept, same axis | pass |
+| Browser: *Shared /power*, two Dataset 50 layers on axis 6 with a 100 W guide; Layer A → Dataset 51. A gets axis 7 (`/power (kW) · Dataset 51`, no guide). Layer B, axis 6 and the 100 W guide are unchanged (`17`) | pass |
+| Browser: Pass from *DSN Passes › dsn_week1.json* and from *Backup Passes › dsn_week1.json* → rows `Pass · DSN Passes / dsn_week1.json` (pass-1, pass-2) and `Pass · Backup Passes / dsn_week1.json` (backup-pass-2) (`17`) | pass |
+| vitest 72 files / 915 tests; svelte-check 0 / 0; eslint and prettier clean | pass |
 
 **Not verified:**
 - the UI e2e suite (it needs merlin-server);
