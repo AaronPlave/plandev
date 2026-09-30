@@ -25,6 +25,7 @@ It adds no tables. The spike code was reverted on both branches and rebuilt, not
   | `3deee3a` | Phase 4 fix: new resource layers are always source-bound (§3) |
   | `255a15e` | Phase 4 cleanup: horizontal guides during resource rebinding (§4) |
   | `9a20711` | Phase 4 cleanup: event row names include the derivation group (§5) |
+  | `7545dac` | Phase 4 fix: legacy declarations resolved with the legacy loader's precedence (§3, §4) |
 
 - **Backend** (`plandev`, same branch):
   - `5a1431a7`: `merlin.delete_partitions()` search_path fix (migration 38);
@@ -88,6 +89,13 @@ A source-less layer therefore only exists in a view saved before sources. The la
 
 Its request is keyed `::<name>`, so it never aliases a source-bound request for the same name.
 
+**One definition of the legacy precedence.** `selectLegacyExternalProfile(planDatasets, simulationDatasetId, name)` picks which `plan_dataset` row a legacy external name means, in this order:
+1. the row tied to the selected simulation;
+2. the first plan-level row;
+3. the first matching row, in `planDatasets` order.
+
+`createExternalResourceSubscription` uses it to load the data. `findLegacyResourceType` uses it to know what a legacy layer is displaying, and keeps the top-level rule that a model resource name reads the Plan simulation. So a legacy layer's declaration is resolved exactly as its data is, and never by registry order. Loading behavior is unchanged, and old views are neither migrated nor bound.
+
 **Old views are not rewritten.** The v3→v4 migration only bumps the version; it deliberately adds no `sourceId`.
 
 **Evidence.** Legacy views (plan 2 views 2 and 3, and plan 1's default view) were rendered on a baseline build (develop plus the four independent fixes) and on this branch:
@@ -125,7 +133,8 @@ Legacy event layers (type filters only) still show the type from every visible l
 **Where the source is shown.** Legends and tooltips name the source (`/battery/soc · Dataset 50`, `Source: External Datasets · Dataset 50`). Axis labels of layers bound to a non-Plan source name it (`/power (W) · Dataset 50`). Plan layers do not repeat `· Simulation` on the axis; their legend and tooltip still name it.
 
 **Rebinding a resource layer** (changing its source, or its resource while bound) re-derives everything that comes from the resource declaration. `getResourceLayerPresentation(resourceType, sourceId, sourceLabel)` is the single mapping from a `ResourceType` to schema family, default chart type, axis label, unit and tick count. Both `createTimelineResourceLayer` and `rebindResourceLayer` use it, so creation and rebinding cannot diverge. `rebindResourceLayer`:
-1. **Resolves the declaration.** It looks up the new resource's `ResourceType` in the new source's catalog (`findResourceType`), and the previous one the same way.
+1. **Resolves the declaration.** It looks up the new resource's `ResourceType` in the new source's catalog (`findResourceType`). The previous one is looked up the same way for a bound layer. For a legacy unbound layer it uses `findLegacyResourceType` (§3), so decisions are based on the resource actually displayed.
+   - **Regression this prevents:** Dataset 50 (plan-level, `/power` W) is listed before Dataset 51 (tied to the selected simulation, `/power` kW). A legacy `/power` layer shows Dataset 51's kW. The registry-order lookup took it for W, so binding it to Dataset 50 would have kept a 500 kW guide as 500 W.
 2. **Updates the binding.** It sets `sourceId` and `filter.resource`, and keeps the layer id.
 3. **Chart type.** Within the same schema family it keeps the layer's styling (colour, width, and a user-chosen line/x-range). If the new resource is discrete, a line layer becomes an x-range. If a numeric resource replaces a discrete one, an x-range becomes a line. Conversion builds the layer with the same creators as `createTimelineResourceLayer`.
 4. **Axis.** The layer's own axis (`layer.yAxisId`) is updated in place: its label always; its tick count, fit mode and scale domain are reset unless family and unit are unchanged. If sibling layers share the axis, it is left untouched for them and the layer gets a new axis.
@@ -295,6 +304,14 @@ Tested with scripted Chromium runs. The screenshots are in `img/`.
 | Browser: *Shared /power*, two Dataset 50 layers on axis 6 with a 100 W guide; Layer A → Dataset 51. A gets axis 7 (`/power (kW) · Dataset 51`, no guide). Layer B, axis 6 and the 100 W guide are unchanged (`17`) | pass |
 | Browser: Pass from *DSN Passes › dsn_week1.json* and from *Backup Passes › dsn_week1.json* → rows `Pass · DSN Passes / dsn_week1.json` (pass-1, pass-2) and `Pass · Backup Passes / dsn_week1.json` (backup-pass-2) (`17`) | pass |
 | vitest 72 files / 915 tests; svelte-check 0 / 0; eslint and prettier clean | pass |
+
+**Legacy declaration fix.**
+
+| Check | Result |
+|---|---|
+| Unit tests (`timelineSources.test.ts`, `externalResource.test.ts`): with Dataset 50 (plan-level, W) before Dataset 51 (sim 10, kW), the legacy data subscription fetches Dataset 51 and `findLegacyResourceType` returns kW, while the registry-order lookup would return W. A model resource name still resolves to the Plan. Plan-level wins over rows tied to other simulations. Otherwise the first row in array order wins, not the lowest id. Rebinding the legacy kW layer with a 500 guide to Dataset 50 drops the guide and resets the axis; the old inference would have kept it | pass |
+| Browser, view 9 *Legacy /power* (unbound, 500 guide, manual scale): renders 0.2 (Dataset 51). Bound to Dataset 50, it renders `120 (W)`; the saved axis is `/power (W) · Dataset 50` with fit mode reset and no scale domain, and the guide is removed | pass |
+| vitest 72 files / 920 tests; svelte-check 0 / 0; eslint and prettier clean | pass |
 
 **Not verified:**
 - the UI e2e suite (it needs merlin-server);
