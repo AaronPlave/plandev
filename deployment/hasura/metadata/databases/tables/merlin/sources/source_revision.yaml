@@ -1,0 +1,76 @@
+table:
+  name: source_revision
+  schema: merlin
+configuration:
+  custom_name: "source_revision"
+object_relationships:
+- name: source
+  using:
+    foreign_key_constraint_on: source_id
+array_relationships:
+- name: resources
+  using:
+    foreign_key_constraint_on:
+      column: revision_id
+      table:
+        name: source_resource
+        schema: merlin
+- name: plan_sources
+  using:
+    foreign_key_constraint_on:
+      column: source_revision_id
+      table:
+        name: plan_source
+        schema: merlin
+# storage_key and original_path are server-side details: readers go through the gateway's query endpoint.
+select_permissions:
+  - role: aerie_admin
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: user
+    permission:
+      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, original_file_id,
+                content_hash, coverage_start, coverage_end, storage_kind, metadata, requested_by, requested_at,
+                started_at, heartbeat_at, finished_at]
+      filter: {}
+      allow_aggregations: true
+  - role: viewer
+    permission:
+      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, original_file_id,
+                content_hash, coverage_start, coverage_end, storage_kind, metadata, requested_by, requested_at,
+                started_at, heartbeat_at, finished_at]
+      filter: {}
+      allow_aggregations: true
+# A revision is requested by inserting it; the ingest worker does the rest. Only admins may point a
+# revision at an arbitrary server path.
+insert_permissions:
+  - role: aerie_admin
+    permission:
+      columns: [source_id, adapter, original_file_id, original_path, storage_kind, metadata]
+      check: {}
+      set:
+        requested_by: "x-hasura-user-id"
+  - role: user
+    permission:
+      columns: [source_id, adapter, original_file_id, storage_kind, metadata]
+      check: {"source":{"owner":{"_eq":"X-Hasura-User-Id"}}}
+      set:
+        requested_by: "x-hasura-user-id"
+update_permissions:
+  - role: aerie_admin
+    permission:
+      columns: [canceled]
+      filter: {}
+  - role: user
+    permission:
+      columns: [canceled]
+      filter: {"requested_by":{"_eq":"X-Hasura-User-Id"}}
+delete_permissions:
+  - role: aerie_admin
+    permission:
+      filter: {}
+  - role: user
+    permission:
+      filter: {"source":{"owner":{"_eq":"X-Hasura-User-Id"}}}

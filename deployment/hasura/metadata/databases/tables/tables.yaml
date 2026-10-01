@@ -104,6 +104,10 @@
 
 # External Datasets
 - "!include merlin/plan_dataset.yaml"
+- "!include merlin/sources/source.yaml"
+- "!include merlin/sources/source_revision.yaml"
+- "!include merlin/sources/source_resource.yaml"
+- "!include merlin/sources/plan_source.yaml"
 
 # External Events
 - "!include merlin/derivation_group.yaml"

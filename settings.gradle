@@ -29,6 +29,7 @@ include 'scheduler-server'
 include 'scheduler-worker'
 include 'sequencing-server'
 include 'action-server'
+include 'source-ingest'
 
 // Command-line interface direct to services
 include 'constraints'

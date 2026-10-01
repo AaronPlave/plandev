@@ -56,6 +56,10 @@ begin;
   -- External Datasets
   \ir tables/merlin/plan_dataset.sql
 
+  -- Imported Sources
+  \ir tables/merlin/sources/source.sql
+  \ir tables/merlin/sources/source_storage.sql
+
   -- Constraints
   \ir tables/merlin/constraints/constraint_metadata.sql
   \ir tables/merlin/constraints/constraint_definition.sql

@@ -1,0 +1,58 @@
+table:
+  name: source
+  schema: merlin
+configuration:
+  custom_name: "source"
+array_relationships:
+- name: revisions
+  using:
+    foreign_key_constraint_on:
+      column: source_id
+      table:
+        name: source_revision
+        schema: merlin
+select_permissions:
+  - role: aerie_admin
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: user
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+insert_permissions:
+  - role: aerie_admin
+    permission:
+      columns: [name, source_type, metadata]
+      check: {}
+      set:
+        owner: "x-hasura-user-id"
+  - role: user
+    permission:
+      columns: [name, source_type, metadata]
+      check: {}
+      set:
+        owner: "x-hasura-user-id"
+update_permissions:
+  - role: aerie_admin
+    permission:
+      columns: [name, metadata]
+      filter: {}
+  - role: user
+    permission:
+      columns: [name, metadata]
+      filter: {"owner":{"_eq":"X-Hasura-User-Id"}}
+delete_permissions:
+  - role: aerie_admin
+    permission:
+      filter: {}
+  - role: user
+    permission:
+      filter: {"owner":{"_eq":"X-Hasura-User-Id"}}

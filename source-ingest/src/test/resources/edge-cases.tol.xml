@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XML_TOL>
+<ResourceMetadata>
+<ResourceSpec><Name>Step</Name><DataType>float</DataType><Units>V</Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>PWR</Subsystem></ResourceSpec>
+<ResourceSpec><Name>Line</Name><DataType>float</DataType><Units>deg</Units><Interpolation>linear</Interpolation><Maximum/><Minimum/><Subsystem>GNC</Subsystem></ResourceSpec>
+<ResourceSpec><Name>Mode</Name><DataType>string</DataType><Units></Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>FSW</Subsystem></ResourceSpec>
+<ResourceSpec><Name>Sparse</Name><DataType>float</DataType><Units>W</Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>PWR</Subsystem></ResourceSpec>
+<ResourceSpec><Name>Dup</Name><DataType>integer</DataType><Units></Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>FSW</Subsystem></ResourceSpec>
+<ResourceSpec><Name>Late</Name><DataType>float</DataType><Units></Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>FSW</Subsystem></ResourceSpec>
+<ResourceSpec><Index level="0">A</Index><Name>Arr</Name><DataType>float</DataType><Units></Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>PWR</Subsystem></ResourceSpec>
+<ResourceSpec><Index level="0">B</Index><Name>Arr</Name><DataType>float</DataType><Units></Units><Interpolation>constant</Interpolation><Maximum/><Minimum/><Subsystem>PWR</Subsystem></ResourceSpec>
+</ResourceMetadata>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>0.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>0.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:10.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>1.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:10.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>2.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:20.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>2.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:20.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>4.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:30.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>3.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:30.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>6.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:40.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>4.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:40.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>8.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:50.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>5.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:50.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>10.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:00.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>6.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:00.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>12.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:10.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>7.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:10.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>14.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:20.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>8.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:20.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>16.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:30.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>9.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:30.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>18.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:40.000</TimeStamp><Resource><Name>Step</Name><DoubleValue>10.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:40.000</TimeStamp><Resource><Name>Line</Name><DoubleValue>20.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00.000</TimeStamp><Resource><Name>Mode</Name><StringValue>OFF</StringValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:15.000</TimeStamp><Resource><Name>Mode</Name><StringValue>ON</StringValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:25.000</TimeStamp><Resource><Name>Mode</Name><StringValue>ON</StringValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:35.000</TimeStamp><Resource><Name>Mode</Name></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:45.000</TimeStamp><Resource><Name>Mode</Name><StringValue>SAFE</StringValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:55.000</TimeStamp><Resource><Name>Mode</Name><StringValue>OFF</StringValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:20.000</TimeStamp><Resource><Name>Sparse</Name><DoubleValue>1.5</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:01:30.000</TimeStamp><Resource><Name>Sparse</Name><DoubleValue>2.5</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:10.000</TimeStamp><Resource><Name>Dup</Name><IntegerValue>1</IntegerValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:20.000</TimeStamp><Resource><Name>Dup</Name><IntegerValue>2</IntegerValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:20.000</TimeStamp><Resource><Name>Dup</Name><IntegerValue>3</IntegerValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:30.000</TimeStamp><Resource><Name>Dup</Name><IntegerValue>4</IntegerValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:10.000</TimeStamp><Resource><Name>Late</Name><DoubleValue>1.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:30.000</TimeStamp><Resource><Name>Late</Name><DoubleValue>3.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:20.000</TimeStamp><Resource><Name>Late</Name><DoubleValue>2.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:40.000</TimeStamp><Resource><Name>Late</Name><DoubleValue>4.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:05.000</TimeStamp><Resource><Name>Late</Name><DoubleValue>0.5</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00.000</TimeStamp><Resource><Name>Arr</Name><Index level="0">A</Index><DoubleValue>1.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00.000</TimeStamp><Resource><Name>Arr</Name><Index level="0">B</Index><DoubleValue>2.0</DoubleValue></Resource></TOLrecord>
+<TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:50.000</TimeStamp><Resource><Name>Arr</Name><Index level="0">A</Index><DoubleValue>11.0</DoubleValue></Resource></TOLrecord>
+</XML_TOL>
