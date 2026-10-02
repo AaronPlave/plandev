@@ -13,8 +13,8 @@ import java.util.concurrent.CancellationException;
 
 /**
  * The canonical importer for storage provider {@code pg_chunks_v1}. An adapter streams records in;
- * this class validates them, packs them into chunks, builds the summary pyramid as it goes, and
- * publishes the revision. Memory is bounded by one open chunk and one bucket per level per resource,
+ * this class validates them, packs them into chunks, builds the summary pyramid as it goes, writes
+ * activities to an ordinary table, and publishes the revision. Memory is bounded by one open chunk and one bucket per level per resource,
  * never by the size of the file or of any resource.
  *
  * Records of one resource may arrive in any order and interleaved with other resources. Records
@@ -42,29 +42,39 @@ final class SourceImporter implements SourceAdapter.Sink {
   private final Connection conn;
   private final Connection chunkConn;
   private final Connection summaryConn;
+  private final Connection activityConn;
   private final int revisionId;
   private final int attempt;
   private final String chunkTable;
   private final String summaryTable;
+  private final String activityTable;
   private final List<Res> resources = new ArrayList<>();
   private PgCopy chunks;
   private PgCopy summaries;
+  private PgCopy activities;
+  private int activityCount;
   private long samples;
   private long nonFinite;
   private volatile String canceled;
   private long manifestAtMillis = -1;
 
-  SourceImporter(Connection conn, Connection chunkConn, Connection summaryConn, int revisionId, int attempt) {
+  SourceImporter(
+      Connection conn, Connection chunkConn, Connection summaryConn, Connection activityConn, int revisionId, int attempt)
+  {
     this.conn = conn;
     this.chunkConn = chunkConn;
     this.summaryConn = summaryConn;
+    this.activityConn = activityConn;
     this.revisionId = revisionId;
     this.attempt = attempt;
     this.chunkTable = "merlin.source_chunk_" + revisionId + "_" + attempt;
     this.summaryTable = "merlin.source_summary_" + revisionId + "_" + attempt;
+    this.activityTable = "merlin.source_activity_" + revisionId + "_" + attempt;
   }
 
   long samples() { return samples; }
+
+  int activities() { return activityCount; }
 
   long manifestAtMillis() { return manifestAtMillis; }
 
@@ -130,7 +140,11 @@ final class SourceImporter implements SourceAdapter.Sink {
     conn.commit();
     chunks = new PgCopy(chunkConn, chunkTable, "revision_id, resource_id, t0, t1, n, times, nums, texts, kinds");
     summaries = new PgCopy(summaryConn, summaryTable + "_staging", SUMMARY_COLUMNS);
+    activities = new PgCopy(activityConn, activityTable, ACTIVITY_COLUMNS);
   }
+
+  private static final String ACTIVITY_COLUMNS =
+      "revision_id, id, source_key, type, name, category, start_time, end_time, attributes, parameters, metadata";
 
   private static final String SUMMARY_COLUMNS =
       "revision_id, resource_id, level, bucket, n, first_t, last_t, first_kind, last_kind, "
@@ -154,6 +168,20 @@ final class SourceImporter implements SourceAdapter.Sink {
     r.add(t, num, text, kind);
   }
 
+  @Override
+  public void activity(SourceAdapter.ActivityRecord a) throws SQLException {
+    if (chunks == null) manifestComplete();
+    for (final long t : new long[] {a.startMicros(), a.endMicros()}) {
+      if (t <= -MAX_EXACT_MICROS || t >= MAX_EXACT_MICROS) {
+        throw new IllegalArgumentException("Timestamp out of range for activity " + a.key() + ": " + t);
+      }
+    }
+    if ((++activityCount & 0xfff) == 0) checkCanceled();
+    activities.row(11).int4(revisionId).int4(activityCount - 1).text(a.key()).text(a.type()).text(a.name())
+        .text(emptyToNull(a.category())).timestamptz(a.startMicros()).timestamptz(Math.max(a.startMicros(), a.endMicros()))
+        .jsonb(a.attributes()).jsonb(a.parameters()).jsonb(a.metadata());
+  }
+
   /** Flushes everything, re-sorts out-of-order resources, prunes summaries, indexes and publishes. */
   void finish(Instant revisionCoverageEnd) throws SQLException {
     if (chunks == null) manifestComplete();
@@ -161,6 +189,7 @@ final class SourceImporter implements SourceAdapter.Sink {
     for (final var r : resources) r.close();
     chunks.finish();
     summaries.finish();
+    activities.finish();
 
     final var unsorted = resources.stream().filter(r -> !r.sorted).toList();
     if (!unsorted.isEmpty()) resort(unsorted);
@@ -219,7 +248,8 @@ final class SourceImporter implements SourceAdapter.Sink {
       st.setTimestamp(2, declaredEnd != null ? Timestamp.from(declaredEnd) : last == Long.MIN_VALUE ? null : micros(last));
       st.setString(3, STORAGE_KIND);
       st.setString(4, Json.object("chunks", chunkTable, "summaries", summaryTable));
-      st.setString(5, Json.object("samples", samples, "nonFiniteAsNull", nonFinite, "resources", resources.size()));
+      st.setString(5, Json.object("samples", samples, "nonFiniteAsNull", nonFinite, "resources", resources.size(),
+          "activities", activityCount));
       st.setInt(6, revisionId);
       st.setInt(7, attempt);
       if (st.executeUpdate() != 1) throw new SQLException("Revision " + revisionId + " lost its lease while publishing");

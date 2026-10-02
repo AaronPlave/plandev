@@ -4,7 +4,7 @@ import java.io.InputStream;
 import java.util.List;
 
 /**
- * Reads one source file format into typed resource records.
+ * Reads one source file format into typed resource and activity records.
  *
  * An adapter only parses. Validation, batching, persistence and publication belong to the
  * importer ({@link SourceImporter}), so a new format never touches storage code.
@@ -19,7 +19,7 @@ public interface SourceAdapter {
 
   /**
    * Streams the whole file into the sink: every {@link Sink#declare} first, then
-   * {@link Sink#manifestComplete}, then samples. Memory must not grow with file size.
+   * {@link Sink#manifestComplete}, then samples and activities. Memory must not grow with file size.
    */
   void read(InputStream in, Sink sink) throws Exception;
 
@@ -32,6 +32,9 @@ public interface SourceAdapter {
 
     /** One record. {@code text} is set for discrete resources, {@code num} for numeric ones. */
     void sample(int resource, long tMicros, double num, String text, byte kind) throws Exception;
+
+    /** One activity instance, complete with its end. Sources without activities never call it. */
+    default void activity(ActivityRecord activity) throws Exception {}
   }
 
   /** A sample's value is present. */
@@ -61,4 +64,22 @@ public interface SourceAdapter {
       List<String> possibleStates,
       String minimum,
       String maximum) {}
+
+  /**
+   * An activity instance as the source recorded it. {@code attributes}, {@code parameters} and {@code metadata}
+   * are JSON objects, so nothing the source records about the instance is dropped.
+   *
+   * @param key the source's own identifier for the instance
+   * @param category the source-native grouping, such as a TOL subsystem
+   */
+  record ActivityRecord(
+      String key,
+      String type,
+      String name,
+      String category,
+      long startMicros,
+      long endMicros,
+      String attributes,
+      String parameters,
+      String metadata) {}
 }

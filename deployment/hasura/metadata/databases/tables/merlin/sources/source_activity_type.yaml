@@ -1,0 +1,26 @@
+table:
+  name: source_activity_type
+  schema: merlin
+configuration:
+  custom_name: "source_activity_type"
+object_relationships:
+- name: revision
+  using:
+    foreign_key_constraint_on: revision_id
+# Written only by the ingest worker, when a revision is published.
+select_permissions:
+  - role: aerie_admin
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: user
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true

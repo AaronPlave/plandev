@@ -93,8 +93,9 @@ final class SummaryFixtureIT {
     final var job = new SourceWorker(config).claim(revision);
     try (final var conn = config.connect(false);
          final var chunkConn = config.connect(true);
-         final var summaryConn = config.connect(true)) {
-      final var importer = new SourceImporter(conn, chunkConn, summaryConn, revision, job.attempt());
+         final var summaryConn = config.connect(true);
+         final var activityConn = config.connect(true)) {
+      final var importer = new SourceImporter(conn, chunkConn, summaryConn, activityConn, revision, job.attempt());
       FIXTURE.read(InputStream.nullInputStream(), importer);
       importer.finish(null);
     }

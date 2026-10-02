@@ -80,10 +80,11 @@ comment on column merlin.source_summary.change_t is e''
 create function merlin.source_storage_tables(revision_id integer)
   returns table (name regclass, attempt integer)
   language sql stable as $$
-  select c.oid::regclass, (regexp_match(c.relname, format('^source_(?:chunk|summary|resort)_%s_(\d+)', revision_id)))[1]::integer
+  select c.oid::regclass,
+         (regexp_match(c.relname, format('^source_(?:chunk|summary|resort|activity)_%s_(\d+)', revision_id)))[1]::integer
     from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
    where ns.nspname = 'merlin' and c.relkind in ('r', 'p')
-     and c.relname ~ format('^source_(chunk|summary|resort)_%s_\d+', revision_id)
+     and c.relname ~ format('^source_(chunk|summary|resort|activity)_%s_\d+', revision_id)
 $$;
 
 comment on function merlin.source_storage_tables is e''
@@ -149,6 +150,7 @@ begin
   execute format('create table merlin.source_chunk_%s_%s (like merlin.source_chunk)', revision_id, attempt);
   execute format('create unlogged table merlin.source_summary_%s_%s_staging (like merlin.source_summary)',
     revision_id, attempt);
+  execute format('create table merlin.source_activity_%s_%s (like merlin.source_activity)', revision_id, attempt);
 end$$;
 
 comment on function merlin.source_storage_begin is e''
@@ -195,10 +197,33 @@ begin
     'for values in (%s)', suffix, revision_id);
   execute format('alter table merlin.source_summary attach partition merlin.source_summary_%s '
     'for values in (%s)', suffix, revision_id);
+
+  -- Activities, and the revision's activity type catalog.
+  execute format('create index on merlin.source_activity_%s (start_time)', suffix);
+  execute format('create index on merlin.source_activity_%s (type, start_time)', suffix);
+  execute format('create index on merlin.source_activity_%s using gist (tstzrange(start_time, end_time, ''[]''))', suffix);
+  execute format('alter table merlin.source_activity_%1$s add constraint source_activity_%1$s_revision '
+    'check (revision_id = %2$s)', suffix, revision_id);
+  execute format('alter table merlin.source_activity attach partition merlin.source_activity_%s '
+    'for values in (%s)', suffix, revision_id);
+  execute format('insert into merlin.source_activity_type '
+    '(revision_id, type, count, category, first_start, last_end, parameters) '
+    'select %2$s, a.type, count(*), mode() within group (order by a.category), min(a.start_time), max(a.end_time), '
+    '  coalesce(p.parameters, ''{}'') '
+    'from merlin.source_activity_%1$s a left join ('
+    '  select type, jsonb_object_agg(name, value_type) parameters from ('
+    '    select type, e.key name, mode() within group (order by jsonb_typeof(e.value)) value_type '
+    '    from merlin.source_activity_%1$s, jsonb_each(parameters) e '
+    '    where jsonb_typeof(e.value) <> ''null'' group by type, e.key) t '
+    '  group by type) p using (type) '
+    'group by a.type, p.parameters', suffix, revision_id);
+  -- Without statistics, window reads ignore the range index (200 ms instead of 10 ms on a 670k-activity revision).
+  execute format('analyze merlin.source_activity_%s', suffix);
 end$$;
 
 comment on function merlin.source_storage_publish is e''
-  'Indexes an attempt''s loaded tables and attaches them, making the revision''s data readable. The caller '
+  'Indexes an attempt''s loaded tables, writes the activity type catalog and attaches the tables, making the '
+  'revision''s data readable. The caller '
   'marks the revision successful in the same transaction, which still holds the lease this took.';
 
 create function merlin.source_storage_discard(revision_id integer, attempt integer)

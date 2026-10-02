@@ -134,14 +134,15 @@ final class SourceWorker {
     try (final var conn = config.connect(false);
          final var chunkConn = config.connect(true);
          final var summaryConn = config.connect(true);
+         final var activityConn = config.connect(true);
          final var beatConn = config.connect(true)) {
-      final var importer = new SourceImporter(conn, chunkConn, summaryConn, job.revisionId, job.attempt);
+      final var importer = new SourceImporter(conn, chunkConn, summaryConn, activityConn, job.revisionId, job.attempt);
       final long total = Files.size(job.path);
       final Runnable beat = () -> {
         try {
           final var canceled = heartbeat(beatConn, job, Json.object(
               "phase", phase.get(), "bytesRead", bytesRead.get(), "bytesTotal", total, "samples", importer.samples(),
-              "elapsedMs", System.currentTimeMillis() - t0,
+              "activities", importer.activities(), "elapsedMs", System.currentTimeMillis() - t0,
               "catalogMs", importer.manifestAtMillis() < 0 ? null : importer.manifestAtMillis() - t0));
           if (canceled == null) importer.cancel("Ingest attempt " + job.attempt + " was reclaimed by another worker");
           else if (canceled) importer.cancel("Ingest canceled");
@@ -186,15 +187,15 @@ final class SourceWorker {
         try (final var st = conn.prepareStatement(
             "update merlin.source_revision set progress = progress || ?::jsonb where id = ? and ingest_attempt = ?")) {
           st.setString(1, Json.object("phase", "done", "bytesRead", bytesRead.get(), "bytesTotal", total,
-              "samples", importer.samples(), "elapsedMs", System.currentTimeMillis() - t0,
-              "catalogMs", importer.manifestAtMillis() - t0));
+              "samples", importer.samples(), "activities", importer.activities(),
+              "elapsedMs", System.currentTimeMillis() - t0, "catalogMs", importer.manifestAtMillis() - t0));
           st.setInt(2, job.revisionId);
           st.setInt(3, job.attempt);
           st.executeUpdate();
         }
         conn.commit();
-        System.err.printf("revision %d: %,d samples in %.1f s%n", job.revisionId, importer.samples(),
-            (System.currentTimeMillis() - t0) / 1e3);
+        System.err.printf("revision %d: %,d samples and %,d activities in %.1f s%n", job.revisionId, importer.samples(),
+            importer.activities(), (System.currentTimeMillis() - t0) / 1e3);
       } catch (Exception e) {
         failure = e;
       }

@@ -52,9 +52,10 @@ final class SourceWorkerIT {
     try (final var conn = config.connect(false);
          final var chunkConn = config.connect(true);
          final var summaryConn = config.connect(true);
+         final var activityConn = config.connect(true);
          final var beatConn = config.connect(true)) {
       // A loads its catalog and streams every sample, then stalls with its COPYs still open...
-      final var importerA = new SourceImporter(conn, chunkConn, summaryConn, revision, a.attempt());
+      final var importerA = new SourceImporter(conn, chunkConn, summaryConn, activityConn, revision, a.attempt());
       try (final var in = Inputs.open(edge)) {
         new TolAdapter().read(in, importerA);
       }

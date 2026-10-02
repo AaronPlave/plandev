@@ -258,3 +258,13 @@
   permissions:
     - role: aerie_admin
     - role: user
+- function:
+    name: source_activities_in_window
+    schema: merlin
+  configuration:
+    custom_root_fields:
+      function: source_activities_in_window
+  permissions:
+    - role: aerie_admin
+    - role: user
+    - role: viewer

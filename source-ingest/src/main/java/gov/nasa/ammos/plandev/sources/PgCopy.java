@@ -43,6 +43,9 @@ final class PgCopy implements AutoCloseable {
 
   PgCopy bool(boolean v) { ensure(5); buf.putInt(1).put((byte) (v ? 1 : 0)); return this; }
 
+  /** A timestamptz, from microseconds since the Unix epoch (Postgres counts from 2000-01-01). */
+  PgCopy timestamptz(long unixMicros) { return int8(unixMicros - 946_684_800_000_000L); }
+
   /** An interval of whole microseconds (no days or months). */
   PgCopy interval(long micros) { ensure(20); buf.putInt(16).putLong(micros).putInt(0).putInt(0); return this; }
 

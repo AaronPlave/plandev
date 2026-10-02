@@ -19,6 +19,7 @@ final class TolAdapterTest {
   private static final class Collect implements SourceAdapter.Sink {
     final List<SourceAdapter.ResourceDecl> decls = new ArrayList<>();
     final List<Sample> samples = new ArrayList<>();
+    final List<SourceAdapter.ActivityRecord> activities = new ArrayList<>();
     int declaredBeforeFirstSample = -1;
 
     @Override public void declare(SourceAdapter.ResourceDecl decl) { decls.add(decl); }
@@ -27,6 +28,11 @@ final class TolAdapterTest {
 
     @Override public void sample(int resource, long t, double num, String text, byte kind) {
       samples.add(new Sample(resource, t, num, text, kind));
+    }
+
+    @Override public void activity(SourceAdapter.ActivityRecord activity) {
+      if (declaredBeforeFirstSample < 0) throw new AssertionError("activity before the manifest");
+      activities.add(activity);
     }
 
     int id(String key) {
@@ -41,11 +47,53 @@ final class TolAdapterTest {
   }
 
   private static Collect read() throws Exception {
+    return read("/edge-cases.tol.xml");
+  }
+
+  private static Collect read(String resource) throws Exception {
     final var sink = new Collect();
-    try (final var in = TolAdapterTest.class.getResourceAsStream("/edge-cases.tol.xml")) {
+    try (final var in = TolAdapterTest.class.getResourceAsStream(resource)) {
       new TolAdapter().read(in, sink);
     }
     return sink;
+  }
+
+  private static long at(String hms) {
+    final var parts = hms.split(":");
+    return T0 + ((Long.parseLong(parts[0]) * 60 + Long.parseLong(parts[1])) * 60 + Long.parseLong(parts[2])) * 1_000_000L;
+  }
+
+  @Test
+  void activitiesEndAfterTheirSpanElseAtTheirActEndElseAtTheirStart() throws Exception {
+    final var sink = read("/activities.tol.xml");
+    // Emitted as they end (Pass_1 and Turn_2 were open together); never-ended ones at the end of the file.
+    assertEquals(List.of("Pass_0", "Turn_2", "Pass_1", "Tour_4", "Turn_3", "Turn_5"),
+        sink.activities.stream().map(SourceAdapter.ActivityRecord::key).toList());
+    final var byKey = new java.util.HashMap<String, SourceAdapter.ActivityRecord>();
+    sink.activities.forEach(a -> byKey.put(a.key(), a));
+    assertEquals(at("00:00:00"), byKey.get("Pass_0").startMicros());
+    assertEquals(at("01:00:00"), byKey.get("Pass_0").endMicros()); // its 1 h span, not its ACT_END
+    assertTrue(byKey.get("Pass_0").metadata().contains("\"actEnd\":\"2030-001T01:30:00.000\""));
+    assertEquals(at("03:00:00"), byKey.get("Pass_1").endMicros()); // no span: its ACT_END
+    assertEquals(at("03:45:00"), byKey.get("Turn_3").endMicros()); // no ACT_END: start + span
+    assertEquals(at("05:00:00"), byKey.get("Turn_5").endMicros()); // neither: its start
+    assertEquals(T0 + 86_400_000_000L, byKey.get("Tour_4").endMicros());
+    assertEquals(1, sink.samples.size() / 2); // resources are read alongside
+  }
+
+  @Test
+  void activitiesKeepTheirMetadataAndTypedValues() throws Exception {
+    final var pass = read("/activities.tol.xml").activities.get(0);
+    assertEquals("Pass", pass.type());
+    assertEquals("Pass_DSS-14", pass.name());
+    assertEquals("DSN", pass.category());
+    assertEquals("{\"Color\":\"Orange\",\"subsystem\":\"DSN\",\"legend\":\"Passes\",\"span\":3600000,"
+        + "\"start\":\"2030-001T00:00:00.000\"}", pass.attributes());
+    assertEquals("{\"station\":\"DSS-14\",\"elevation\":26.5,\"count\":3,\"prime\":true,"
+        + "\"stations\":[\"DSS-24\",\"DSS-36\"],\"max\":{\"units\":\"DEGREES\",\"value\":41.25},"
+        + "\"nested\":[{\"a\":1}],\"bad\":\"NaN\"}", pass.parameters());
+    assertEquals("{\"parent\":\"Pass_DSS-14\",\"visibility\":\"visible\",\"actEnd\":\"2030-001T01:30:00.000\"}",
+        pass.metadata());
   }
 
   @Test

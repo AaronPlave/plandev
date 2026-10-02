@@ -108,6 +108,9 @@
 - "!include merlin/sources/source_revision.yaml"
 - "!include merlin/sources/source_resource.yaml"
 - "!include merlin/sources/plan_source.yaml"
+- "!include merlin/sources/source_activity.yaml"
+- "!include merlin/sources/source_activity_type.yaml"
+- "!include merlin/analysis_activity.yaml"
 
 # External Events
 - "!include merlin/derivation_group.yaml"
@@ -195,6 +198,7 @@
 - "!include ui/extensions.yaml"
 - "!include ui/file_extension_content_type.yaml"
 - "!include ui/view.yaml"
+- "!include ui/analysis.yaml"
 
 #################
 #### Actions ####

@@ -1,0 +1,31 @@
+table:
+  name: source_activity
+  schema: merlin
+configuration:
+  custom_name: "source_activity"
+object_relationships:
+- name: revision
+  using:
+    manual_configuration:
+      remote_table:
+        name: source_revision
+        schema: merlin
+      column_mapping:
+        revision_id: id
+# Written only by the ingest worker.
+select_permissions:
+  - role: aerie_admin
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: user
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}
+      allow_aggregations: true

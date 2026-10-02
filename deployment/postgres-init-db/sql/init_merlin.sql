@@ -58,6 +58,7 @@ begin;
 
   -- Imported Sources
   \ir tables/merlin/sources/source.sql
+  \ir tables/merlin/sources/source_activity.sql
   \ir tables/merlin/sources/source_storage.sql
 
   -- Constraints
@@ -115,4 +116,5 @@ begin;
   \ir views/merlin/simulated_activity.sql
   \ir views/merlin/resource_profile.sql
   \ir views/merlin/derived_events.sql
+  \ir views/merlin/analysis_activity.sql
 end;
