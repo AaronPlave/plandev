@@ -54,6 +54,7 @@ create table merlin.source_revision (
   started_at timestamptz,
   heartbeat_at timestamptz,
   finished_at timestamptz,
+  ingest_attempt integer not null default 0,
 
   constraint source_revision_synthetic_key
     primary key (id),
@@ -91,8 +92,11 @@ comment on column merlin.source_revision.storage_kind is e''
 comment on column merlin.source_revision.storage_key is e''
   'Provider-specific location of the data. Never persisted outside the database (e.g. in views).';
 comment on column merlin.source_revision.heartbeat_at is e''
-  'Refreshed by the ingesting worker. A stale heartbeat on an incomplete revision means the worker died; '
-  'another worker may reclaim it and restart the ingest from scratch.';
+  'Refreshed by the ingesting worker. A stale heartbeat on an incomplete revision means the worker died or '
+  'stalled; another worker may reclaim it and restart the ingest from scratch.';
+comment on column merlin.source_revision.ingest_attempt is e''
+  'Incremented by every claim: the lease. Each write an ingest makes to the revision, its catalog or its storage '
+  'requires the attempt it claimed to still be current, so a stalled worker that was reclaimed can change nothing.';
 
 create function merlin.notify_source_revision_pending()
   returns trigger

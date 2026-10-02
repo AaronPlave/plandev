@@ -18,7 +18,8 @@ import java.util.Set;
  *
  * A resource is identified by its name plus its {@code Index} levels, so arrayed resources
  * such as {@code Voltage[A]} and {@code Voltage[B]} stay distinct.
- * Other record types are skipped; this adapter reads resources only.
+ * Other record types are skipped; this adapter reads resources only. A record for a resource the
+ * metadata does not declare is an error.
  */
 public final class TolAdapter implements SourceAdapter {
   private static final Set<String> NUMERIC_TYPES = Set.of("float", "integer", "duration");
@@ -130,17 +131,9 @@ public final class TolAdapter implements SourceAdapter {
     if (time == null || name == null) throw new IllegalArgumentException("TOLrecord without TimeStamp or Name");
 
     final var key = key(name, index == null ? List.of() : index);
-    Integer ordinal = ordinals.get(key);
-    if (ordinal == null) {
-      // A record for an undeclared resource: declare it from what the record says.
-      final boolean numeric = "DoubleValue".equals(valueTag) || "IntegerValue".equals(valueTag);
-      final var decl = new ResourceDecl(key, name, index == null ? List.of() : List.copyOf(index),
-          numeric ? "float" : "string", numeric, "", "constant", "", List.of(), null, null);
-      ordinal = decls.size();
-      ordinals.put(key, ordinal);
-      decls.add(decl);
-      sink.declare(decl);
-    }
+    final Integer ordinal = ordinals.get(key);
+    // The catalog is published before samples, so every resource must be in ResourceMetadata.
+    if (ordinal == null) throw new IllegalArgumentException("TOL record references undeclared resource " + key);
 
     final long t = parseTime(time);
     final var decl = decls.get(ordinal);

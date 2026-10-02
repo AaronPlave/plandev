@@ -94,6 +94,22 @@ final class TolAdapterTest {
   }
 
   @Test
+  void aRecordForAnUndeclaredResourceIsAnError() {
+    final var xml = """
+        <XML_TOL><ResourceMetadata>
+        <ResourceSpec><Name>Known</Name><DataType>float</DataType></ResourceSpec>
+        </ResourceMetadata>
+        <TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:00</TimeStamp><Resource><Name>Known</Name><DoubleValue>1</DoubleValue></Resource></TOLrecord>
+        <TOLrecord type="RES_VAL"><TimeStamp>2030-001T00:00:01</TimeStamp><Resource><Name>Other</Name><Index level="0">A</Index><DoubleValue>2</DoubleValue></Resource></TOLrecord>
+        </XML_TOL>""";
+    final var sink = new Collect();
+    final var e = assertThrows(IllegalArgumentException.class,
+        () -> new TolAdapter().read(new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)), sink));
+    assertEquals("TOL record references undeclared resource Other[A]", e.getMessage());
+    assertEquals(1, sink.decls.size());
+  }
+
+  @Test
   void parsesDayOfYearTimestamps() {
     assertEquals(T0, TolAdapter.parseTime("2030-001T00:00:00"));
     assertEquals(T0 + 1_500L, TolAdapter.parseTime("2030-001T00:00:00.0015"));

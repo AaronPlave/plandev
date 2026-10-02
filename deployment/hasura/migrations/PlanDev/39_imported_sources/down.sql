@@ -2,12 +2,14 @@
 -- revisions first, then the tables and functions.
 delete from merlin.source_revision;
 
-drop function merlin.source_storage_discard(integer);
-drop function merlin.source_storage_publish(integer, jsonb);
-drop function merlin.source_storage_resort_table(integer);
-drop function merlin.source_storage_begin(integer);
+drop function merlin.source_storage_discard(integer, integer);
+drop function merlin.source_storage_publish(integer, integer, jsonb);
+drop function merlin.source_storage_resort_table(integer, integer);
+drop function merlin.source_storage_begin(integer, integer);
 drop trigger drop_source_revision_storage on merlin.source_revision;
 drop function merlin.drop_source_revision_storage();
+drop function merlin.source_ingest_lease(integer, integer);
+drop function merlin.source_storage_tables(integer);
 drop table merlin.source_summary;
 drop table merlin.source_chunk;
 

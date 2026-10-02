@@ -20,7 +20,11 @@ import java.util.concurrent.CancellationException;
  * Records of one resource may arrive in any order and interleaved with other resources. Records
  * already in time order (the common case) are written in one pass. A resource found out of order is
  * re-sorted through a temporary table at the end (time, then arrival order), so equal timestamps keep
- * the order the file gave them.
+ * the order the file gave them. A chunk never splits samples that share a timestamp: it grows past
+ * {@link #CHUNK} instead, so an exact page can be cut at a chunk boundary.
+ *
+ * Everything is written under the ingest attempt's lease ({@code merlin.source_ingest_lease}): into
+ * tables of this attempt's own, and to the revision only while the attempt is still current.
  */
 final class SourceImporter implements SourceAdapter.Sink {
   static final String STORAGE_KIND = "pg_chunks_v1";
@@ -39,6 +43,7 @@ final class SourceImporter implements SourceAdapter.Sink {
   private final Connection chunkConn;
   private final Connection summaryConn;
   private final int revisionId;
+  private final int attempt;
   private final String chunkTable;
   private final String summaryTable;
   private final List<Res> resources = new ArrayList<>();
@@ -46,23 +51,38 @@ final class SourceImporter implements SourceAdapter.Sink {
   private PgCopy summaries;
   private long samples;
   private long nonFinite;
-  private volatile boolean canceled;
+  private volatile String canceled;
   private long manifestAtMillis = -1;
 
-  SourceImporter(Connection conn, Connection chunkConn, Connection summaryConn, int revisionId) {
+  SourceImporter(Connection conn, Connection chunkConn, Connection summaryConn, int revisionId, int attempt) {
     this.conn = conn;
     this.chunkConn = chunkConn;
     this.summaryConn = summaryConn;
     this.revisionId = revisionId;
-    this.chunkTable = "merlin.source_chunk_" + revisionId;
-    this.summaryTable = "merlin.source_summary_" + revisionId;
+    this.attempt = attempt;
+    this.chunkTable = "merlin.source_chunk_" + revisionId + "_" + attempt;
+    this.summaryTable = "merlin.source_summary_" + revisionId + "_" + attempt;
   }
 
   long samples() { return samples; }
 
   long manifestAtMillis() { return manifestAtMillis; }
 
-  void cancel() { canceled = true; }
+  /** Stops the ingest at its next check, failing it with {@code reason}. */
+  void cancel(String reason) { canceled = reason; }
+
+  private void checkCanceled() {
+    if (canceled != null) throw new CancellationException(canceled);
+  }
+
+  /** Takes the revision's row lock for the current transaction; throws if this attempt was reclaimed. */
+  static void lease(Connection conn, int revisionId, int attempt) throws SQLException {
+    try (final var st = conn.prepareStatement("select merlin.source_ingest_lease(?, ?)")) {
+      st.setInt(1, revisionId);
+      st.setInt(2, attempt);
+      st.execute();
+    }
+  }
 
   @Override
   public void declare(SourceAdapter.ResourceDecl decl) {
@@ -73,6 +93,7 @@ final class SourceImporter implements SourceAdapter.Sink {
   @Override
   public void manifestComplete() throws SQLException {
     // The catalog is committed before any data is read, so the source is browseable while it ingests.
+    lease(conn, revisionId, attempt);
     try (final var st = conn.prepareStatement("""
         insert into merlin.source_resource
           (revision_id, id, key, name, index, category, data_type, numeric, interpolation, units, schema, metadata)
@@ -101,8 +122,9 @@ final class SourceImporter implements SourceAdapter.Sink {
     manifestAtMillis = System.currentTimeMillis();
 
     // Standalone tables, attached as partitions only when the revision is published.
-    try (final var st = conn.prepareStatement("select merlin.source_storage_begin(?)")) {
+    try (final var st = conn.prepareStatement("select merlin.source_storage_begin(?, ?)")) {
       st.setInt(1, revisionId);
+      st.setInt(2, attempt);
       st.execute();
     }
     conn.commit();
@@ -112,7 +134,8 @@ final class SourceImporter implements SourceAdapter.Sink {
 
   private static final String SUMMARY_COLUMNS =
       "revision_id, resource_id, level, bucket, n, first_t, last_t, first_kind, last_kind, "
-      + "min_t, max_t, first_v, last_v, min_v, max_v, first_s, last_s, changes";
+      + "min_t, max_t, first_v, last_v, min_v, max_v, first_s, last_s, "
+      + "nonvalue_t, nonvalue_kind, change_t, change_kind, change_s";
 
   @Override
   public void sample(int resource, long t, double num, String text, byte kind) throws SQLException {
@@ -127,13 +150,14 @@ final class SourceImporter implements SourceAdapter.Sink {
       if (!r.numeric && text == null) kind = SourceAdapter.NULL;
     }
     if (kind != SourceAdapter.VALUE) { num = Double.NaN; text = null; }
-    if ((++samples & 0xffff) == 0 && canceled) throw new CancellationException("Ingest canceled");
+    if ((++samples & 0xffff) == 0) checkCanceled();
     r.add(t, num, text, kind);
   }
 
   /** Flushes everything, re-sorts out-of-order resources, prunes summaries, indexes and publishes. */
   void finish(Instant revisionCoverageEnd) throws SQLException {
     if (chunks == null) manifestComplete();
+    checkCanceled();
     for (final var r : resources) r.close();
     chunks.finish();
     summaries.finish();
@@ -179,9 +203,10 @@ final class SourceImporter implements SourceAdapter.Sink {
       }
       st.executeBatch();
     }
-    try (final var st = conn.prepareStatement("select merlin.source_storage_publish(?, ?::jsonb)")) {
+    try (final var st = conn.prepareStatement("select merlin.source_storage_publish(?, ?, ?::jsonb)")) {
       st.setInt(1, revisionId);
-      st.setString(2, keptLevels);
+      st.setInt(2, attempt);
+      st.setString(3, keptLevels);
       st.execute();
     }
     try (final var st = conn.prepareStatement("""
@@ -189,14 +214,15 @@ final class SourceImporter implements SourceAdapter.Sink {
            set status = 'success', finished_at = now(), coverage_start = ?, coverage_end = ?,
                storage_kind = ?, storage_key = ?::jsonb,
                progress = progress || ?::jsonb
-         where id = ?""")) {
+         where id = ? and ingest_attempt = ?""")) {
       st.setTimestamp(1, first == Long.MAX_VALUE ? null : micros(first));
       st.setTimestamp(2, declaredEnd != null ? Timestamp.from(declaredEnd) : last == Long.MIN_VALUE ? null : micros(last));
       st.setString(3, STORAGE_KIND);
       st.setString(4, Json.object("chunks", chunkTable, "summaries", summaryTable));
       st.setString(5, Json.object("samples", samples, "nonFiniteAsNull", nonFinite, "resources", resources.size()));
       st.setInt(6, revisionId);
-      st.executeUpdate();
+      st.setInt(7, attempt);
+      if (st.executeUpdate() != 1) throw new SQLException("Revision " + revisionId + " lost its lease while publishing");
     }
     conn.commit();
   }
@@ -206,8 +232,9 @@ final class SourceImporter implements SourceAdapter.Sink {
     final var ids = new StringBuilder();
     for (final var r : unsorted) ids.append(ids.isEmpty() ? "" : ",").append(r.id);
     final String resortTable;
-    try (final var st = conn.prepareStatement("select merlin.source_storage_resort_table(?)")) {
+    try (final var st = conn.prepareStatement("select merlin.source_storage_resort_table(?, ?)")) {
       st.setInt(1, revisionId);
+      st.setInt(2, attempt);
       try (final var rs = st.executeQuery()) {
         rs.next();
         resortTable = rs.getString(1);
@@ -289,10 +316,10 @@ final class SourceImporter implements SourceAdapter.Sink {
     final SourceAdapter.ResourceDecl decl;
     final int id;
     final boolean numeric;
-    final long[] t = new long[CHUNK];
-    final double[] v;
-    final String[] s;
-    final byte[] k = new byte[CHUNK];
+    long[] t = new long[CHUNK];
+    double[] v;
+    String[] s;
+    byte[] k = new byte[CHUNK];
     int n;
     boolean anyNonValue;
     boolean sorted = true;
@@ -340,15 +367,25 @@ final class SourceImporter implements SourceAdapter.Sink {
       prevNum = num;
       prevText = text;
 
+      if (n >= CHUNK && time != t[n - 1]) flushChunk();
+      if (n == t.length) grow();
       t[n] = time;
       if (numeric) v[n] = num; else s[n] = text;
       k[n] = kind;
       if (kind != SourceAdapter.VALUE) anyNonValue = true;
-      if (++n == CHUNK) flushChunk();
+      n++;
 
       if (sorted) {
         for (final var level : levels) if (!level.dropped) level.add(time, num, text, kind, changed);
       }
+    }
+
+    /** A run of equal timestamps longer than a chunk stays in one chunk. */
+    private void grow() {
+      final int size = t.length * 2;
+      t = java.util.Arrays.copyOf(t, size);
+      k = java.util.Arrays.copyOf(k, size);
+      if (numeric) v = java.util.Arrays.copyOf(v, size); else s = java.util.Arrays.copyOf(s, size);
     }
 
     void close() throws SQLException {
@@ -405,11 +442,16 @@ final class SourceImporter implements SourceAdapter.Sink {
       final int level;
       final long width;
       long bucket = Long.MIN_VALUE;
-      int bn, changes;
+      int bn;
       long firstT, lastT, minT, maxT;
       double firstV, lastV, minV, maxV;
       String firstS, lastS;
       byte firstKind, lastKind;
+      // The first null/gap and (discrete) the first change after the bucket's first sample.
+      boolean hasNonValue, hasChange;
+      long nonValueT, changeT;
+      byte nonValueKind, changeKind;
+      String changeS;
       long rows;
       boolean dropped;
 
@@ -428,9 +470,16 @@ final class SourceImporter implements SourceAdapter.Sink {
           bucket = b;
           firstT = time; firstV = num; firstS = text; firstKind = kind;
           minT = maxT = 0; minV = Double.POSITIVE_INFINITY; maxV = Double.NEGATIVE_INFINITY;
+          hasNonValue = hasChange = false;
+        } else {
+          if (!hasNonValue && kind != SourceAdapter.VALUE) {
+            hasNonValue = true; nonValueT = time; nonValueKind = kind;
+          }
+          if (!numeric && !hasChange && changed) {
+            hasChange = true; changeT = time; changeKind = kind; changeS = text;
+          }
         }
         bn++;
-        if (changed) changes++;
         lastT = time; lastV = num; lastS = text; lastKind = kind;
         if (kind == SourceAdapter.VALUE && numeric) {
           if (num < minV) { minV = num; minT = time; }
@@ -441,14 +490,16 @@ final class SourceImporter implements SourceAdapter.Sink {
       void emit() throws SQLException {
         if (bn == 0) return;
         final boolean hasRange = numeric && maxV >= minV;
-        summaries.row(18).int4(revisionId).int4(id).int2(level).int8(bucket).int4(bn).int8(firstT).int8(lastT)
+        summaries.row(22).int4(revisionId).int4(id).int2(level).int8(bucket).int4(bn).int8(firstT).int8(lastT)
             .int2(firstKind).int2(lastKind);
         if (hasRange) summaries.int8(minT).int8(maxT); else summaries.nullValue().nullValue();
         summaries.float8OrNull(numeric ? firstV : Double.NaN).float8OrNull(numeric ? lastV : Double.NaN);
         if (hasRange) summaries.float8(minV).float8(maxV); else summaries.nullValue().nullValue();
-        summaries.text(numeric ? null : firstS).text(numeric ? null : lastS).int4(changes);
+        summaries.text(numeric ? null : firstS).text(numeric ? null : lastS);
+        if (hasNonValue) summaries.int8(nonValueT).int2(nonValueKind); else summaries.nullValue().nullValue();
+        if (hasChange) summaries.int8(changeT).int2(changeKind).text(changeS);
+        else summaries.nullValue().nullValue().nullValue();
         bn = 0;
-        changes = 0;
         // Abandon levels that clearly will not reduce the data. Only costs speed, never correctness:
         // a reader falls back to a coarser level or to raw chunks.
         if (++rows > MIN_ROWS_BEFORE_DROP && rows > count / (REDUCTION / 4)) dropped = true;

@@ -25,6 +25,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link SourceImporter}, and records progress, failure or success on the row. Nothing about a job
  * lives in this process, so a crash loses at most the attempt in progress, which another worker
  * restarts once the heartbeat goes stale.
+ *
+ * Each claim increments {@code ingest_attempt}, and that number is the claim's lease: every write the
+ * attempt makes (heartbeat, catalog, storage, success or failure) requires it to still be current. A
+ * worker that stalls long enough to be reclaimed finds out at its next write, and stops without
+ * touching the newer attempt's state or storage.
  */
 final class SourceWorker {
   private static final List<SourceAdapter> ADAPTERS = List.of(new TolAdapter());
@@ -48,7 +53,7 @@ final class SourceWorker {
     }
   }
 
-  private record Job(int revisionId, String adapter, Path path) {}
+  record Job(int revisionId, int attempt, String adapter, Path path) {}
 
   private final Config config;
 
@@ -59,7 +64,7 @@ final class SourceWorker {
     try (final var listen = config.connect(true)) {
       if (!once) try (final var st = listen.createStatement()) { st.execute("listen source_revision_pending"); }
       while (true) {
-        final var job = claim();
+        final var job = claim(null);
         if (job != null) {
           ingest(job);
           continue;
@@ -71,61 +76,80 @@ final class SourceWorker {
     }
   }
 
-  private Job claim() throws SQLException {
+  /** Claims the oldest runnable revision (or only {@code revisionId}), starting a new attempt at it. */
+  Job claim(Integer revisionId) throws SQLException {
     try (final var c = config.connect(true);
          final var st = c.prepareStatement("""
              update merlin.source_revision r
                 set status = 'incomplete', started_at = now(), heartbeat_at = now(), finished_at = null,
-                    error = null, progress = '{}'::jsonb
+                    error = null, progress = '{}'::jsonb, ingest_attempt = r.ingest_attempt + 1
               where r.id = (
                 select id from merlin.source_revision
                  where not canceled
                    and (status = 'pending' or (status = 'incomplete' and heartbeat_at < now() - make_interval(secs => ?)))
+                   and (?::integer is null or id = ?::integer)
                  order by requested_at
                  for update skip locked
                  limit 1)
-             returning r.id, r.adapter, r.original_path,
+             returning r.id, r.ingest_attempt, r.adapter, r.original_path,
                        (select convert_from(f.path, 'UTF8') from merlin.uploaded_file f where f.id = r.original_file_id)""")) {
       st.setInt(1, STALE_SECONDS);
+      st.setObject(2, revisionId, java.sql.Types.INTEGER);
+      st.setObject(3, revisionId, java.sql.Types.INTEGER);
       try (final var rs = st.executeQuery()) {
         if (!rs.next()) return null;
-        final var path = rs.getString(3) != null ? Path.of(rs.getString(3)) : config.fileStore.resolve(rs.getString(4));
-        return new Job(rs.getInt(1), rs.getString(2), path);
+        final var path = rs.getString(4) != null ? Path.of(rs.getString(4)) : config.fileStore.resolve(rs.getString(5));
+        return new Job(rs.getInt(1), rs.getInt(2), rs.getString(3), path);
       }
     }
   }
 
-  private void ingest(Job job) throws Exception {
-    System.err.printf("revision %d: ingesting %s with %s%n", job.revisionId, job.path, job.adapter);
+  /**
+   * Refreshes the job's heartbeat and progress. Returns null when the attempt has lost its lease, else
+   * whether the revision was canceled.
+   */
+  static Boolean heartbeat(Connection c, Job job, String progress) throws SQLException {
+    try (final var st = c.prepareStatement("""
+        update merlin.source_revision
+           set heartbeat_at = now(), progress = progress || ?::jsonb
+         where id = ? and ingest_attempt = ? and status = 'incomplete' returning canceled""")) {
+      st.setString(1, progress);
+      st.setInt(2, job.revisionId);
+      st.setInt(3, job.attempt);
+      try (final var rs = st.executeQuery()) {
+        return rs.next() ? rs.getBoolean(1) : null;
+      }
+    }
+  }
+
+  void ingest(Job job) throws Exception {
+    System.err.printf("revision %d attempt %d: ingesting %s with %s%n", job.revisionId, job.attempt, job.path, job.adapter);
     final long t0 = System.currentTimeMillis();
     final var bytesRead = new AtomicLong();
     final var digest = MessageDigest.getInstance("SHA-256");
     final var phase = new java.util.concurrent.atomic.AtomicReference<>("parsing");
     final var heartbeat = Executors.newSingleThreadScheduledExecutor();
+    Exception failure = null;
 
     try (final var conn = config.connect(false);
          final var chunkConn = config.connect(true);
          final var summaryConn = config.connect(true);
          final var beatConn = config.connect(true)) {
-      final var importer = new SourceImporter(conn, chunkConn, summaryConn, job.revisionId);
+      final var importer = new SourceImporter(conn, chunkConn, summaryConn, job.revisionId, job.attempt);
       final long total = Files.size(job.path);
-      heartbeat.scheduleAtFixedRate(() -> {
-        try (final var st = beatConn.prepareStatement("""
-            update merlin.source_revision
-               set heartbeat_at = now(), progress = progress || ?::jsonb
-             where id = ? returning canceled""")) {
-          st.setString(1, Json.object(
+      final Runnable beat = () -> {
+        try {
+          final var canceled = heartbeat(beatConn, job, Json.object(
               "phase", phase.get(), "bytesRead", bytesRead.get(), "bytesTotal", total, "samples", importer.samples(),
               "elapsedMs", System.currentTimeMillis() - t0,
               "catalogMs", importer.manifestAtMillis() < 0 ? null : importer.manifestAtMillis() - t0));
-          st.setInt(2, job.revisionId);
-          try (final var rs = st.executeQuery()) {
-            if (rs.next() && rs.getBoolean(1)) importer.cancel();
-          }
+          if (canceled == null) importer.cancel("Ingest attempt " + job.attempt + " was reclaimed by another worker");
+          else if (canceled) importer.cancel("Ingest canceled");
         } catch (SQLException e) {
           System.err.println("heartbeat failed: " + e.getMessage());
         }
-      }, 0, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+      };
+      heartbeat.scheduleAtFixedRate(beat, 0, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
 
       try {
         final var adapter = ADAPTERS.stream().filter(a -> a.name().equals(job.adapter)).findFirst()
@@ -136,6 +160,7 @@ final class SourceWorker {
           }
         }
         // A reclaimed job restarts from scratch.
+        SourceImporter.lease(conn, job.revisionId, job.attempt);
         try (final var st = conn.prepareStatement("delete from merlin.source_resource where revision_id = ?")) {
           st.setInt(1, job.revisionId);
           st.executeUpdate();
@@ -145,51 +170,70 @@ final class SourceWorker {
           st.setInt(2, job.revisionId);
           st.executeUpdate();
         }
+        conn.commit();
         try (final var in = Inputs.open(job.path, raw -> new Tap(raw, digest, bytesRead))) {
           adapter.read(in, importer);
         }
         phase.set("indexing");
-        importer.finish(null);
-        try (final var st = conn.prepareStatement("update merlin.source_revision set content_hash = ?, progress = progress || ?::jsonb where id = ?")) {
+        beat.run(); // a cancel or reclaim that arrived during the last interval still stops the publish
+        // Written in the transaction that publishes, which holds the lease.
+        try (final var st = conn.prepareStatement("update merlin.source_revision set content_hash = ? where id = ?")) {
           st.setString(1, "sha256:" + HexFormat.of().formatHex(digest.digest()));
-          st.setString(2, Json.object("phase", "done", "bytesRead", bytesRead.get(), "bytesTotal", total,
+          st.setInt(2, job.revisionId);
+          st.executeUpdate();
+        }
+        importer.finish(null);
+        try (final var st = conn.prepareStatement(
+            "update merlin.source_revision set progress = progress || ?::jsonb where id = ? and ingest_attempt = ?")) {
+          st.setString(1, Json.object("phase", "done", "bytesRead", bytesRead.get(), "bytesTotal", total,
               "samples", importer.samples(), "elapsedMs", System.currentTimeMillis() - t0,
               "catalogMs", importer.manifestAtMillis() - t0));
-          st.setInt(3, job.revisionId);
+          st.setInt(2, job.revisionId);
+          st.setInt(3, job.attempt);
           st.executeUpdate();
         }
         conn.commit();
         System.err.printf("revision %d: %,d samples in %.1f s%n", job.revisionId, importer.samples(),
             (System.currentTimeMillis() - t0) / 1e3);
       } catch (Exception e) {
-        heartbeat.shutdownNow();
-        conn.rollback();
-        fail(job, e);
-        if (!(e instanceof CancellationException)) e.printStackTrace();
+        failure = e;
       }
     } finally {
       heartbeat.shutdownNow();
     }
+    // Only once this attempt's connections are closed: an open COPY would hold the tables discard drops.
+    if (failure != null) {
+      fail(job, failure);
+      if (!(failure instanceof CancellationException)) failure.printStackTrace();
+    }
   }
 
-  private void fail(Job job, Exception e) throws SQLException {
+  /**
+   * Discards the attempt's own storage and, if it still holds the lease, marks the revision failed. A
+   * reclaimed attempt changes nothing but its own (unread) tables.
+   */
+  void fail(Job job, Exception e) throws SQLException {
+    final int updated;
     try (final var c = config.connect(true)) {
-      try (final var st = c.prepareStatement("select merlin.source_storage_discard(?)")) {
+      try (final var st = c.prepareStatement("select merlin.source_storage_discard(?, ?)")) {
         st.setInt(1, job.revisionId);
+        st.setInt(2, job.attempt);
         st.execute();
       }
       try (final var st = c.prepareStatement("""
           update merlin.source_revision
              set status = 'failed', finished_at = now(), error = ?::jsonb
-           where id = ?""")) {
+           where id = ? and ingest_attempt = ? and status = 'incomplete'""")) {
         st.setString(1, Json.write(Map.of(
             "type", e instanceof CancellationException ? "canceled" : e.getClass().getSimpleName(),
             "message", String.valueOf(e.getMessage()))));
         st.setInt(2, job.revisionId);
-        st.executeUpdate();
+        st.setInt(3, job.attempt);
+        updated = st.executeUpdate();
       }
     }
-    System.err.printf("revision %d failed: %s%n", job.revisionId, e.getMessage());
+    System.err.printf(updated == 1 ? "revision %d attempt %d failed: %s%n" : "revision %d attempt %d stopped, no longer current: %s%n",
+        job.revisionId, job.attempt, e.getMessage());
   }
 
   /** Registers a file already on the server as a new pending revision. Prints the ids. */
