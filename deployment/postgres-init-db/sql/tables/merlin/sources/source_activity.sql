@@ -69,14 +69,3 @@ comment on column merlin.source_activity_type.parameters is e''
   'when they differ): number, string, boolean, array or object. Imported types declare no parameters of their '
   'own, so this is what filters offer for them.';
 
-create function merlin.source_activities_in_window(revision_id integer, window_start timestamptz, window_end timestamptz)
-  returns setof merlin.source_activity
-  language sql stable as $$
-  select a.*
-    from merlin.source_activity a
-   where a.revision_id = source_activities_in_window.revision_id
-     and tstzrange(a.start_time, a.end_time, '[]') && tstzrange(window_start, window_end, '[)')
-$$;
-
-comment on function merlin.source_activities_in_window is e''
-  'The activities of a revision that overlap [window_start, window_end), served by the partition''s range index.';

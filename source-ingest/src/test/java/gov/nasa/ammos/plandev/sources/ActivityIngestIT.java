@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *   SOURCES_IT_DB_URL='jdbc:postgresql://localhost:5432/plandev?user=merlin_user&password=...' ./gradlew :source-ingest:test
  *
  * Ingests src/test/resources/activities.tol.xml through the worker, checks what was stored and how it is read
- * (by window, by type catalog, through merlin.analysis_activity), then deletes it. Skipped without SOURCES_IT_DB_URL.
+ * (by type catalog, through merlin.analysis_activity), then deletes it. Skipped without SOURCES_IT_DB_URL.
  */
 @EnabledIfEnvironmentVariable(named = "SOURCES_IT_DB_URL", matches = ".+")
 final class ActivityIngestIT {
@@ -59,14 +59,10 @@ final class ActivityIngestIT {
   }
 
   @Test
-  void catalogsTypesAndReadsByWindow() throws Exception {
+  void catalogsTypesAndReadsThroughTheAnalysisView() throws Exception {
     assertEquals(List.of("Pass|2|DSN", "Turn|3|GNC", "modeling_control|1|Control"),
         query("select concat_ws('|', type, count, category) from merlin.source_activity_type where revision_id = "
             + revision + " order by type collate \"C\""));
-    // Overlapping [01:00, 02:15): including the day-long activity that started before it, and the pass ending at 01:00.
-    assertEquals(List.of("Pass_0", "Pass_1", "Tour_4", "Turn_2"), query(
-        "select source_key from merlin.source_activities_in_window(" + revision
-            + ", '2030-01-01T01:00:00Z', '2030-01-01T02:15:00Z') order by source_key"));
     assertEquals(List.of("revision|Pass_DSS-14|Pass", "revision|Pass_DSS-43|Pass"), query(
         "select concat_ws('|', source_kind, name, type) from merlin.analysis_activity where source_kind = 'revision'"
             + " and source_ref = " + revision + " and type = 'Pass' order by start_time"));

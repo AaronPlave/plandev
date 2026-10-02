@@ -2,7 +2,6 @@ drop table ui.analysis;
 drop view merlin.analysis_activity;
 
 -- Published revisions keep their resources; their activities go with these tables.
-drop function merlin.source_activities_in_window(integer, timestamptz, timestamptz);
 drop table merlin.source_activity_type;
 drop table merlin.source_activity;
 do $$

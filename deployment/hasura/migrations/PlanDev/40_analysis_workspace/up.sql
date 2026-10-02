@@ -72,17 +72,6 @@ comment on column merlin.source_activity_type.parameters is e''
   'when they differ): number, string, boolean, array or object. Imported types declare no parameters of their '
   'own, so this is what filters offer for them.';
 
-create function merlin.source_activities_in_window(revision_id integer, window_start timestamptz, window_end timestamptz)
-  returns setof merlin.source_activity
-  language sql stable as $$
-  select a.*
-    from merlin.source_activity a
-   where a.revision_id = source_activities_in_window.revision_id
-     and tstzrange(a.start_time, a.end_time, '[]') && tstzrange(window_start, window_end, '[)')
-$$;
-
-comment on function merlin.source_activities_in_window is e''
-  'The activities of a revision that overlap [window_start, window_end), served by the partition''s range index.';
 
 -- Storage functions now also load, index, catalog and attach a revision's activities.
 
@@ -158,7 +147,6 @@ begin
   -- Activities, and the revision's activity type catalog.
   execute format('create index on merlin.source_activity_%s (start_time)', suffix);
   execute format('create index on merlin.source_activity_%s (type, start_time)', suffix);
-  execute format('create index on merlin.source_activity_%s using gist (tstzrange(start_time, end_time, ''[]''))', suffix);
   execute format('alter table merlin.source_activity_%1$s add constraint source_activity_%1$s_revision '
     'check (revision_id = %2$s)', suffix, revision_id);
   execute format('alter table merlin.source_activity attach partition merlin.source_activity_%s '
@@ -174,7 +162,7 @@ begin
     '    where jsonb_typeof(e.value) <> ''null'' group by type, e.key) t '
     '  group by type) p using (type) '
     'group by a.type, p.parameters', suffix, revision_id);
-  -- Without statistics, window reads ignore the range index (200 ms instead of 10 ms on a 670k-activity revision).
+  -- Statistics for the planner, which otherwise misjudges reads of a freshly loaded revision.
   execute format('analyze merlin.source_activity_%s', suffix);
 end$$;
 comment on function merlin.source_storage_publish is e''

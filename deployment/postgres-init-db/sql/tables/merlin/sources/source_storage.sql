@@ -201,7 +201,6 @@ begin
   -- Activities, and the revision's activity type catalog.
   execute format('create index on merlin.source_activity_%s (start_time)', suffix);
   execute format('create index on merlin.source_activity_%s (type, start_time)', suffix);
-  execute format('create index on merlin.source_activity_%s using gist (tstzrange(start_time, end_time, ''[]''))', suffix);
   execute format('alter table merlin.source_activity_%1$s add constraint source_activity_%1$s_revision '
     'check (revision_id = %2$s)', suffix, revision_id);
   execute format('alter table merlin.source_activity attach partition merlin.source_activity_%s '
@@ -217,7 +216,7 @@ begin
     '    where jsonb_typeof(e.value) <> ''null'' group by type, e.key) t '
     '  group by type) p using (type) '
     'group by a.type, p.parameters', suffix, revision_id);
-  -- Without statistics, window reads ignore the range index (200 ms instead of 10 ms on a 670k-activity revision).
+  -- Statistics for the planner, which otherwise misjudges reads of a freshly loaded revision.
   execute format('analyze merlin.source_activity_%s', suffix);
 end$$;
 
