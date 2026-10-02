@@ -73,7 +73,7 @@ final class SummaryFixtureIT {
   };
 
   @Test
-  void ingestsTheFixtureAndStoresEveryVisibleEventInItsSummaries() throws Exception {
+  void ingestsTheFixtureAndStoresItsEventsInTheSummaries() throws Exception {
     final int revision;
     try (final var c = config.connect(false)) {
       try (final var st = c.createStatement()) {

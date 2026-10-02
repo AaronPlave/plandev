@@ -91,7 +91,8 @@ Two tables, list-partitioned by revision. Each revision is two standalone tables
   non-empty buckets are stored. A level is kept only when it reduces the resource at least 32×, and resources
   under 4,096 samples keep none (any read of them is already bounded).
 
-**What a summary bucket keeps.** Each bucket stores real samples, with times and kinds:
+**What a summary bucket keeps.** Summaries are a bounded display approximation; exact queries read the
+chunks and are authoritative. Each bucket stores real samples, with times and kinds:
 
 | | numeric | discrete |
 |---|---|---|
@@ -100,10 +101,11 @@ Two tables, list-partitioned by revision. Each revision is two standalone tables
 | first null or gap after the first sample (`nonvalue_*`) | ✓ | ✓ |
 | first change of state after the first sample (`change_*`) | | ✓ |
 
-That is the least that keeps every visually meaningful event inside a bucket: `10 → gap → 10` and
+So short state changes and breaks stay visible in common cases: `10 → gap → 10` and
 `10 → null → 10` still break the line, and `A → B → A`, `A → null → A`, `A → gap → A` and `A → B → gap → A`
-still show the brief state and the gap, even though first and last are equal. What is not kept: a second
-distinct event in the same bucket (e.g. `A → B → C → A` shows B, not C), and the exact duration of a brief state,
+still show the brief state and the gap, even though first and last are equal. What is not kept: further
+events in the same bucket (`A → B → C → A` shows B, not C; of several separate nulls or gaps only the first
+breaks the line), and the exact duration of a brief state,
 which is drawn to within one summary bucket (no wider than one output bucket, so about a pixel).
 
 A display query picks, per resource, the coarsest stored level whose bucket is no wider than one output
@@ -259,7 +261,7 @@ All strategies return only real samples, ordered by time.
 | `m4` (default) | first, min, max, last, + a null/gap | Draws the same pixels as the full line at one bucket per pixel; keeps spikes and breaks. The null/gap kept is the first one after the bucket's first sample, so a bucket that starts with one and has another still breaks inside. |
 | `minmax` | min, max, + a null/gap | 3/5 of m4's points per bucket, so finer buckets at the same budget. Loses the entry/exit values of a bucket, which can misdraw slopes between buckets. |
 | `nth` | every k-th sample | Cheapest, but drops spikes: a one-sample excursion 10× the signal is lost (unit-tested). Not suitable as a default. |
-| discrete | transitions; then per bucket the first and second transitions, the first null/gap and the final state | Dropping repeats is lossless for drawing. When transitions exceed the budget, a brief state (A → B → A) or gap inside a bucket still appears. 4 points per bucket, so `pointBudget / 4` buckets. |
+| discrete | transitions; then per bucket the first and second transitions, the first null/gap and the final state | Dropping repeats changes nothing drawn. When transitions exceed the budget, a brief state (A → B → A) or gap inside a bucket still appears; further events in that bucket may not. 4 points per bucket, so `pointBudget / 4` buckets. |
 
 Summaries keep enough per bucket (see the table above) for any of these to run on the summary pyramid. A future LTTB or state-aware strategy plugs into the same place in `reduce.ts`.
 
@@ -313,6 +315,8 @@ Measured in the browser (full product, 10 rows of numeric, step and discrete res
 | stale worker reclaimed: no writes, no storage damage; cancellation | source-ingest `SourceWorkerIT` |
 | undeclared resource is an import error | adapter `TolAdapterTest` |
 | `/sources/query` authorization | gateway `sources.auth.test.ts` |
+| gateway auth cache: one resolution per token, role and target | gateway `sources.auth-cache.test.ts` |
+| UI batching never mixes sessions | UI `stores/importedResource.test.ts` |
 
 The database tests are skipped unless pointed at a database:
 
@@ -324,6 +328,13 @@ The database tests are skipped unless pointed at a database:
   tests against `edge-cases.tol.xml` ingested through the worker, and against the summary fixture.
   `SOURCES_IT_GATEWAY`, `SOURCES_IT_JWT_KEY` (and optionally `SOURCES_IT_PLAN_SOURCE`) add the authorization
   tests against a running gateway.
+
+These heads have no CI attached. Everything here was run locally, against the `tol` stack with the database
+tests enabled: source-ingest 11/11, gateway 52/52 (none skipped), UI 935/935, plus `svelte-check`, eslint
+and prettier (gateway eslint: 0 errors). After the final cleanup the read benchmark was rerun on the full
+revision with no regression; its windows are random, so single rows vary from run to run (100 resources
+× 4.4 y: 304 ms p50; concurrent 30 d × 10 resources: 108 queries/s at 16 clients; most points per resource
+1,967).
 
 ## Storage decision
 
@@ -352,8 +363,9 @@ The database tests are skipped unless pointed at a database:
 - No UI for exact export (CSV/table). The API supports it (`fidelity: "exact"` + `next` paging).
 - The plan's Sources subscription carries the catalog (3,705 rows here), and Hasura re-polls it. That is
   cheap at this size; a one-shot query per immutable revision would be cheaper.
-- Gateway caches are per-process maps. The catalog cache is unbounded by count (tiny per revision); expired
-  auth entries, which hold a token, are swept once there are 1,000.
+- Gateway caches are per-process maps. The catalog cache is unbounded by count (tiny per revision); auth
+  entries are keyed by a SHA-256 digest of the token, not the token, and expired ones are swept once there
+  are 1,000.
 - A summary bucket shows at most one brief state and one null/gap besides its edges (see above).
 - A stalled worker's tables survive until it resumes or the revision is deleted, if it still held them when
   the newer attempt started.

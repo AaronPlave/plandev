@@ -60,15 +60,18 @@ create table merlin.source_summary (
 comment on table merlin.source_summary is e''
   'The samples of one resource falling in [bucket * width, (bucket + 1) * width), where width is '
   '1 second * 4^level. Only non-empty buckets are stored, and only the levels that reduce the data are kept '
-  '(listed in source_resource.storage). min/max cover values only, not nulls or gaps. Besides its first and '
-  'last samples, a bucket records the internal samples a display needs so that nothing visible inside it is '
-  'lost: the first null or gap, and (discrete resources) the first change of state.';
+  '(listed in source_resource.storage). min/max cover values only, not nulls or gaps. A bucket keeps '
+  'representative samples for display: its first and last, numeric extrema, one internal null or gap, and '
+  '(discrete resources) one internal change of state, so short state changes and breaks stay visible in '
+  'common cases. Further events within the same bucket may be omitted; exact queries read source_chunk and '
+  'remain authoritative.';
 comment on column merlin.source_summary.nonvalue_t is e''
   'The first sample after the bucket''s first whose kind is a null or a gap (nonvalue_kind), so a line '
-  'drawn through the bucket breaks where the data does.';
+  'drawn through the bucket breaks there. Later nulls or gaps in the same bucket are not recorded.';
 comment on column merlin.source_summary.change_t is e''
   'Discrete resources: the first sample after the bucket''s first that differs from the sample before it '
-  '(change_kind, change_s), so a state held more briefly than the bucket still shows.';
+  '(change_kind, change_s), so a state held more briefly than the bucket still shows. Later changes in the '
+  'same bucket are not recorded.';
 
 -- Each ingest attempt loads into its own standalone tables, named source_<chunk|summary>_<revision>_<attempt>.
 -- A worker that was reclaimed while stalled can therefore only ever write to its own tables, which nothing
