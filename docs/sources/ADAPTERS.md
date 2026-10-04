@@ -83,7 +83,7 @@ version or name, so `xml_tol` reports none.
 
 ## The `source_adapter` catalog
 
-On startup each worker upserts its adapters' descriptors into `merlin.source_adapter`:
+Each running worker upserts its adapters' descriptors into `merlin.source_adapter` and marks them seen now. It does this at startup, before each claim (at least every 30 s while idle), and on every heartbeat during an ingest (every 5 s).
 
 | column | type |
 | --- | --- |
@@ -93,14 +93,17 @@ On startup each worker upserts its adapters' descriptors into `merlin.source_ada
 | `extensions`, `mime_types`, `capabilities` | text[] |
 | `config_schema` | jsonb, null when none |
 | `updated_at` | timestamptz |
+| `last_seen_at` | timestamptz: when a running worker last reported the adapter |
 
 Hasura exposes it read-only to every role, so the UI can list importable formats:
 
 ```graphql
-source_adapter { id display_name version extensions capabilities config_schema }
+source_adapter { id display_name version extensions capabilities config_schema last_seen_at }
 ```
 
-Rows of adapters that are no longer installed are not removed.
+**What a row means.** A row means "an adapter some worker has had", not "an adapter that can be used now". Rows are never removed: old revisions name the adapter that read them, and a deployment that removes a plugin only stops that adapter being seen. The UI offers only adapters seen in the last two minutes. When it sees none, it says that no ingest worker is running and that an import will wait, rather than listing formats nothing can read.
+
+**Deployment assumption.** A deployment runs one `source-ingest` worker image. Every worker has the same adapters, so whichever worker claims a revision can read it. If workers ever have different adapter sets, the claim must also check that the worker has the adapter, i.e. `adapter = 'auto' or adapter = any(<installed ids>)`. `auto` would then resolve by whichever worker claims the revision. Neither is needed while there is one image.
 
 ## Future: non-Java adapters
 

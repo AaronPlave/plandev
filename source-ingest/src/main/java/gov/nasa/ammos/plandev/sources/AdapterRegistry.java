@@ -48,8 +48,8 @@ final class AdapterRegistry {
   }
 
   /**
-   * Upserts every installed descriptor into {@code merlin.source_adapter}, the catalog the UI lists.
-   * ponytail: rows of adapters no longer installed are kept; prune them if deployments start removing adapters.
+   * Upserts every installed descriptor into {@code merlin.source_adapter}, marking it seen now. Rows of adapters
+   * no longer installed are kept (old revisions name them) and simply stop being seen.
    */
   void publish(Connection c) throws SQLException {
     try (final var st = c.prepareStatement("""
@@ -58,7 +58,7 @@ final class AdapterRegistry {
         on conflict (id) do update
           set display_name = excluded.display_name, version = excluded.version, extensions = excluded.extensions,
               mime_types = excluded.mime_types, capabilities = excluded.capabilities,
-              config_schema = excluded.config_schema, updated_at = now()""")) {
+              config_schema = excluded.config_schema, updated_at = now(), last_seen_at = now()""")) {
       for (final var a : adapters.values()) {
         final var d = a.descriptor();
         st.setString(1, d.id());

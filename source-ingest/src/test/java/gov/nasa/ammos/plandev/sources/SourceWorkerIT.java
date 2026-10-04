@@ -92,6 +92,15 @@ final class SourceWorkerIT {
   }
 
   @Test
+  void aMissingFileFailsTheRevisionNotTheWorker() throws Exception {
+    final int revision = queryInt("insert into merlin.source_revision (source_id, adapter, original_path, storage_kind) values ("
+        + sourceId + ", 'xml_tol', '/nonexistent/product.tol.xml', 'pg_chunks_v1') returning id");
+    worker.ingest(worker.claim(revision));
+    assertEquals("failed|NoSuchFileException", queryString(
+        "select status || '|' || (error->>'type') from merlin.source_revision where id = " + revision));
+  }
+
+  @Test
   void aLiveAttemptIsNotReclaimed() throws Exception {
     final int revision = newRevision();
     final var job = worker.claim(revision);

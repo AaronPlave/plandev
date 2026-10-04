@@ -6,6 +6,7 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
@@ -62,9 +63,10 @@ final class SourceWorker {
   /** Claims and runs jobs until none are left ({@code once}) or forever, waking on new jobs. */
   void run(boolean once) throws Exception {
     try (final var listen = config.connect(true)) {
-      adapters.publish(listen);
       if (!once) try (final var st = listen.createStatement()) { st.execute("listen source_revision_pending"); }
       while (true) {
+        // Refreshes last_seen_at: what the UI offers is what a running worker can read.
+        adapters.publish(listen);
         final var job = claim(null);
         if (job != null) {
           ingest(job);
@@ -138,13 +140,20 @@ final class SourceWorker {
          final var activityConn = config.connect(true);
          final var beatConn = config.connect(true)) {
       final var importer = new SourceImporter(conn, chunkConn, summaryConn, activityConn, job.revisionId, job.attempt);
-      final long total = Files.size(job.path);
+      long size;
+      try {
+        size = Files.size(job.path);
+      } catch (IOException e) {
+        size = -1; // a missing or unreadable file fails the revision when it is opened below, not the worker
+      }
+      final long total = size;
       final Runnable beat = () -> {
         try {
           final var canceled = heartbeat(beatConn, job, Json.object(
               "phase", phase.get(), "bytesRead", bytesRead.get(), "bytesTotal", total, "samples", importer.samples(),
               "activities", importer.activities(), "elapsedMs", System.currentTimeMillis() - t0,
               "catalogMs", importer.manifestAtMillis() < 0 ? null : importer.manifestAtMillis() - t0));
+          adapters.publish(beatConn); // still running, through a long ingest
           if (canceled == null) importer.cancel("Ingest attempt " + job.attempt + " was reclaimed by another worker");
           else if (canceled) importer.cancel("Ingest canceled");
         } catch (SQLException e) {
@@ -227,7 +236,7 @@ final class SourceWorker {
            where id = ? and ingest_attempt = ? and status = 'incomplete'""")) {
         st.setString(1, Json.write(Map.of(
             "type", e instanceof CancellationException ? "canceled" : e.getClass().getSimpleName(),
-            "message", String.valueOf(e.getMessage()))));
+            "message", e instanceof NoSuchFileException ? "The file is missing: " + e.getMessage() : String.valueOf(e.getMessage()))));
         st.setInt(2, job.revisionId);
         st.setInt(3, job.attempt);
         updated = st.executeUpdate();
