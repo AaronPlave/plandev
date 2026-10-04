@@ -28,7 +28,9 @@ comment on table merlin.source_activity is e''
   'One activity instance of an imported revision. Read-only once published. A revision''s activities are an '
   'ordinary indexed table, not a time-series store: products carry up to about a million of them.';
 comment on column merlin.source_activity.id is e''
-  'Unique within the revision, in file order. With revision_id, the identity timeline selections refer to.';
+  'Unique within the revision, assigned as activities complete: for a TOL, in the order of their ACT_END records, '
+  'not of their starts. With revision_id, the identity timeline selections refer to; source_key keeps the '
+  'product''s own identifier.';
 comment on column merlin.source_activity.source_key is e''
   'The product''s own identifier for the instance (a TOL Instance ID), kept for provenance.';
 comment on column merlin.source_activity.category is e''
