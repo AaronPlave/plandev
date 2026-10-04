@@ -1,18 +1,23 @@
 package gov.nasa.ammos.plandev.sources;
 
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reads one source file format into typed resource and activity records.
  *
  * An adapter only parses. Validation, batching, persistence and publication belong to the
- * importer ({@link SourceImporter}), so a new format never touches storage code.
+ * importer ({@link SourceImporter}), so a new format never touches storage code. An adapter never creates or
+ * changes sources or revisions.
+ *
+ * Adapters are trusted in-process plugins, discovered with {@link java.util.ServiceLoader} (see
+ * {@link AdapterRegistry} and docs/sources/ADAPTERS.md).
  */
 public interface SourceAdapter {
-  String name();
-
-  String version();
+  /** What this adapter is, as the {@code merlin.source_adapter} catalog lists it. */
+  Descriptor descriptor();
 
   /** Whether this adapter understands a file, from its first few kilobytes. */
   boolean probe(byte[] head);
@@ -20,8 +25,33 @@ public interface SourceAdapter {
   /**
    * Streams the whole file into the sink: every {@link Sink#declare} first, then
    * {@link Sink#manifestComplete}, then samples and activities. Memory must not grow with file size.
+   *
+   * @param config the revision's {@code adapter_config} (a JSON document), or null when it has none
    */
-  void read(InputStream in, Sink sink) throws Exception;
+  void read(InputStream in, Sink sink, String config) throws Exception;
+
+  /**
+   * @param id stable; what {@code merlin.source_revision.adapter} names. Never change it once revisions use it.
+   * @param extensions file name endings the adapter reads, e.g. ".tol.gz"; a hint for file pickers, not used to select
+   * @param capabilities which of "resources" and "activities" the adapter can produce
+   * @param configSchema a JSON Schema for {@code adapter_config}, or null when the adapter takes no config
+   */
+  record Descriptor(
+      String id,
+      String displayName,
+      String version,
+      List<String> extensions,
+      List<String> mimeTypes,
+      List<String> capabilities,
+      String configSchema) {}
+
+  /**
+   * Facts about the upstream product, all optional.
+   *
+   * @param generatedAt when the upstream product was generated (not when it was imported)
+   * @param mission free mission-specific facts, as a JSON object
+   */
+  record ProductMetadata(Instant generatedAt, String productVersion, String suggestedName, Map<String, Object> mission) {}
 
   interface Sink {
     /** Declares a resource. Its ordinal is the number of declarations before it. */
@@ -35,6 +65,9 @@ public interface SourceAdapter {
 
     /** One activity instance, complete with its end. Sources without activities never call it. */
     default void activity(ActivityRecord activity) throws Exception {}
+
+    /** Facts about the product as a whole, at any point; the importer stores the last call's in the revision. */
+    default void productMetadata(ProductMetadata product) throws Exception {}
   }
 
   /** A sample's value is present. */

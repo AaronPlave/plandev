@@ -12,7 +12,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.HexFormat;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.Executors;
@@ -21,7 +20,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Runs ingest jobs. A job is a {@code merlin.source_revision} row: the worker claims a pending one
- * (or one whose worker stopped heartbeating), streams its file through the adapter it names into
+ * (or one whose worker stopped heartbeating), streams its file through the adapter it names (or, for
+ * {@code auto}, the one installed adapter that recognizes the file) into
  * {@link SourceImporter}, and records progress, failure or success on the row. Nothing about a job
  * lives in this process, so a crash loses at most the attempt in progress, which another worker
  * restarts once the heartbeat goes stale.
@@ -32,7 +32,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * touching the newer attempt's state or storage.
  */
 final class SourceWorker {
-  private static final List<SourceAdapter> ADAPTERS = List.of(new TolAdapter());
   private static final int HEARTBEAT_SECONDS = 5;
   private static final int STALE_SECONDS = 60;
 
@@ -53,15 +52,17 @@ final class SourceWorker {
     }
   }
 
-  record Job(int revisionId, int attempt, String adapter, Path path) {}
+  record Job(int revisionId, int attempt, String adapter, String adapterConfig, Path path) {}
 
   private final Config config;
+  final AdapterRegistry adapters = AdapterRegistry.load();
 
   SourceWorker(Config config) { this.config = config; }
 
   /** Claims and runs jobs until none are left ({@code once}) or forever, waking on new jobs. */
   void run(boolean once) throws Exception {
     try (final var listen = config.connect(true)) {
+      adapters.publish(listen);
       if (!once) try (final var st = listen.createStatement()) { st.execute("listen source_revision_pending"); }
       while (true) {
         final var job = claim(null);
@@ -91,15 +92,15 @@ final class SourceWorker {
                  order by requested_at
                  for update skip locked
                  limit 1)
-             returning r.id, r.ingest_attempt, r.adapter, r.original_path,
+             returning r.id, r.ingest_attempt, r.adapter, r.adapter_config::text, r.original_path,
                        (select convert_from(f.path, 'UTF8') from merlin.uploaded_file f where f.id = r.original_file_id)""")) {
       st.setInt(1, STALE_SECONDS);
       st.setObject(2, revisionId, java.sql.Types.INTEGER);
       st.setObject(3, revisionId, java.sql.Types.INTEGER);
       try (final var rs = st.executeQuery()) {
         if (!rs.next()) return null;
-        final var path = rs.getString(4) != null ? Path.of(rs.getString(4)) : config.fileStore.resolve(rs.getString(5));
-        return new Job(rs.getInt(1), rs.getInt(2), rs.getString(3), path);
+        final var path = rs.getString(5) != null ? Path.of(rs.getString(5)) : config.fileStore.resolve(rs.getString(6));
+        return new Job(rs.getInt(1), rs.getInt(2), rs.getString(3), rs.getString(4), path);
       }
     }
   }
@@ -153,12 +154,9 @@ final class SourceWorker {
       heartbeat.scheduleAtFixedRate(beat, 0, HEARTBEAT_SECONDS, TimeUnit.SECONDS);
 
       try {
-        final var adapter = ADAPTERS.stream().filter(a -> a.name().equals(job.adapter)).findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("No adapter named " + job.adapter));
+        final SourceAdapter adapter;
         try (final var probe = Inputs.open(job.path)) {
-          if (!adapter.probe(probe.readNBytes(4096))) {
-            throw new IllegalArgumentException("File is not readable by adapter " + adapter.name());
-          }
+          adapter = adapters.select(job.adapter, probe.readNBytes(4096));
         }
         // A reclaimed job restarts from scratch.
         SourceImporter.lease(conn, job.revisionId, job.attempt);
@@ -166,14 +164,16 @@ final class SourceWorker {
           st.setInt(1, job.revisionId);
           st.executeUpdate();
         }
-        try (final var st = conn.prepareStatement("update merlin.source_revision set adapter_version = ? where id = ?")) {
-          st.setString(1, adapter.version());
-          st.setInt(2, job.revisionId);
+        // An auto revision records the adapter it resolved to, so a reclaim or a re-read uses the same one.
+        try (final var st = conn.prepareStatement("update merlin.source_revision set adapter = ?, adapter_version = ? where id = ?")) {
+          st.setString(1, adapter.descriptor().id());
+          st.setString(2, adapter.descriptor().version());
+          st.setInt(3, job.revisionId);
           st.executeUpdate();
         }
         conn.commit();
         try (final var in = Inputs.open(job.path, raw -> new Tap(raw, digest, bytesRead))) {
-          adapter.read(in, importer);
+          adapter.read(in, importer, job.adapterConfig);
         }
         phase.set("indexing");
         beat.run(); // a cancel or reclaim that arrived during the last interval still stops the publish

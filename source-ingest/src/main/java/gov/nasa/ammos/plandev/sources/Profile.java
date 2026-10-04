@@ -68,7 +68,7 @@ final class Profile implements SourceAdapter.Sink {
     final var p = new Profile();
     final var t0 = System.nanoTime();
     try (final var in = Inputs.open(file)) {
-      new TolAdapter().read(in, p);
+      new TolAdapter().read(in, p, null);
     }
     final double secs = (System.nanoTime() - t0) / 1e9;
     try (final var w = new PrintStream(Files.newOutputStream(out))) {

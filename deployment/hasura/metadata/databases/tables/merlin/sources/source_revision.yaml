@@ -7,6 +7,9 @@ object_relationships:
 - name: source
   using:
     foreign_key_constraint_on: source_id
+- name: original_file
+  using:
+    foreign_key_constraint_on: original_file_id
 array_relationships:
 - name: resources
   using:
@@ -38,30 +41,31 @@ select_permissions:
       allow_aggregations: true
   - role: user
     permission:
-      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, original_file_id,
+      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, adapter_config, original_file_id,
                 content_hash, coverage_start, coverage_end, storage_kind, metadata, requested_by, requested_at,
                 started_at, heartbeat_at, finished_at]
       filter: {}
       allow_aggregations: true
   - role: viewer
     permission:
-      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, original_file_id,
+      columns: [id, source_id, status, canceled, error, progress, adapter, adapter_version, adapter_config, original_file_id,
                 content_hash, coverage_start, coverage_end, storage_kind, metadata, requested_by, requested_at,
                 started_at, heartbeat_at, finished_at]
       filter: {}
       allow_aggregations: true
-# A revision is requested by inserting it; the ingest worker does the rest. Only admins may point a
+# A revision is requested by inserting it; the ingest worker does the rest. adapter is an installed adapter's id
+# (merlin.source_adapter) or 'auto' (the default). Only admins may point a
 # revision at an arbitrary server path.
 insert_permissions:
   - role: aerie_admin
     permission:
-      columns: [source_id, adapter, original_file_id, original_path, storage_kind, metadata]
+      columns: [source_id, adapter, adapter_config, original_file_id, original_path, storage_kind, metadata]
       check: {}
       set:
         requested_by: "x-hasura-user-id"
   - role: user
     permission:
-      columns: [source_id, adapter, original_file_id, storage_kind, metadata]
+      columns: [source_id, adapter, adapter_config, original_file_id, storage_kind, metadata]
       check: {"source":{"owner":{"_eq":"X-Hasura-User-Id"}}}
       set:
         requested_by: "x-hasura-user-id"

@@ -58,6 +58,7 @@ begin;
 
   -- Imported Sources
   \ir tables/merlin/sources/source.sql
+  \ir tables/merlin/sources/source_adapter.sql
   \ir tables/merlin/sources/source_activity.sql
   \ir tables/merlin/sources/source_storage.sql
 

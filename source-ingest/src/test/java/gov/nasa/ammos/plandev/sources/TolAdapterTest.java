@@ -53,7 +53,7 @@ final class TolAdapterTest {
   private static Collect read(String resource) throws Exception {
     final var sink = new Collect();
     try (final var in = TolAdapterTest.class.getResourceAsStream(resource)) {
-      new TolAdapter().read(in, sink);
+      new TolAdapter().read(in, sink, null);
     }
     return sink;
   }
@@ -152,7 +152,7 @@ final class TolAdapterTest {
         </XML_TOL>""";
     final var sink = new Collect();
     final var e = assertThrows(IllegalArgumentException.class,
-        () -> new TolAdapter().read(new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)), sink));
+        () -> new TolAdapter().read(new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)), sink, null));
     assertEquals("TOL record references undeclared resource Other[A]", e.getMessage());
     assertEquals(1, sink.decls.size());
   }

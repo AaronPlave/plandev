@@ -57,6 +57,7 @@ final class SourceImporter implements SourceAdapter.Sink {
   private long nonFinite;
   private volatile String canceled;
   private long manifestAtMillis = -1;
+  private String product;
 
   SourceImporter(
       Connection conn, Connection chunkConn, Connection summaryConn, Connection activityConn, int revisionId, int attempt)
@@ -92,6 +93,13 @@ final class SourceImporter implements SourceAdapter.Sink {
       st.setInt(2, attempt);
       st.execute();
     }
+  }
+
+  /** Kept until publish, which stores it as the revision's {@code metadata.product}. */
+  @Override
+  public void productMetadata(SourceAdapter.ProductMetadata p) {
+    product = Json.object("generatedAt", p.generatedAt() == null ? null : p.generatedAt().toString(),
+        "productVersion", p.productVersion(), "suggestedName", p.suggestedName(), "mission", p.mission());
   }
 
   @Override
@@ -242,7 +250,8 @@ final class SourceImporter implements SourceAdapter.Sink {
         update merlin.source_revision
            set status = 'success', finished_at = now(), coverage_start = ?, coverage_end = ?,
                storage_kind = ?, storage_key = ?::jsonb,
-               progress = progress || ?::jsonb
+               progress = progress || ?::jsonb,
+               metadata = metadata || jsonb_strip_nulls(jsonb_build_object('product', ?::jsonb))
          where id = ? and ingest_attempt = ?""")) {
       st.setTimestamp(1, first == Long.MAX_VALUE ? null : micros(first));
       st.setTimestamp(2, declaredEnd != null ? Timestamp.from(declaredEnd) : last == Long.MIN_VALUE ? null : micros(last));
@@ -250,8 +259,9 @@ final class SourceImporter implements SourceAdapter.Sink {
       st.setString(4, Json.object("chunks", chunkTable, "summaries", summaryTable));
       st.setString(5, Json.object("samples", samples, "nonFiniteAsNull", nonFinite, "resources", resources.size(),
           "activities", activityCount));
-      st.setInt(6, revisionId);
-      st.setInt(7, attempt);
+      st.setString(6, product);
+      st.setInt(7, revisionId);
+      st.setInt(8, attempt);
       if (st.executeUpdate() != 1) throw new SQLException("Revision " + revisionId + " lost its lease while publishing");
     }
     conn.commit();

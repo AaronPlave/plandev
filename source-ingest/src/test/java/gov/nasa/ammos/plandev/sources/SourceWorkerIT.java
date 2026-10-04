@@ -57,7 +57,7 @@ final class SourceWorkerIT {
       // A loads its catalog and streams every sample, then stalls with its COPYs still open...
       final var importerA = new SourceImporter(conn, chunkConn, summaryConn, activityConn, revision, a.attempt());
       try (final var in = Inputs.open(edge)) {
-        new TolAdapter().read(in, importerA);
+        new TolAdapter().read(in, importerA, null);
       }
       // ...long enough for its heartbeat to go stale, so B reclaims the revision and ingests it.
       execute("update merlin.source_revision set heartbeat_at = now() - interval '2 minutes' where id = " + revision);

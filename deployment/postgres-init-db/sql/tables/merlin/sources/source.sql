@@ -36,8 +36,9 @@ create table merlin.source_revision (
   error jsonb,
   progress jsonb not null default '{}'::jsonb,
 
-  adapter text not null,
+  adapter text not null default 'auto',
   adapter_version text,
+  adapter_config jsonb,
   original_file_id integer,
   original_path text,
   content_hash text,
@@ -84,6 +85,14 @@ comment on table merlin.source_revision is e''
   'the worker that claims it, and its data becomes visible only when status reaches ''success''.';
 comment on column merlin.source_revision.status is e''
   'pending: waiting for a worker. incomplete: being ingested. success: published and immutable. failed: see error.';
+comment on column merlin.source_revision.adapter is e''
+  'The id of the adapter that reads the file (see merlin.source_adapter), or ''auto'' to let the worker probe every '
+  'installed adapter and use the one that recognizes it. The worker replaces ''auto'' with the id it chose.';
+comment on column merlin.source_revision.adapter_config is e''
+  'Options for the adapter (a JSON document its config_schema describes), or null. Kept so the import is reproducible.';
+comment on column merlin.source_revision.metadata is e''
+  'Free metadata. The ingest writes metadata.product from what the adapter reports about the upstream product: '
+  '{generatedAt?, productVersion?, suggestedName?, mission?}.';
 comment on column merlin.source_revision.original_path is e''
   'A file already on the server, for inputs too large to upload through the gateway.';
 comment on column merlin.source_revision.storage_kind is e''

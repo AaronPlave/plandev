@@ -46,12 +46,13 @@ final class SummaryFixtureIT {
 
   /** The fixture as an adapter would stream it. */
   private static final SourceAdapter FIXTURE = new SourceAdapter() {
-    @Override public String name() { return "it_summary"; }
-    @Override public String version() { return "1"; }
+    @Override public Descriptor descriptor() {
+      return new Descriptor("it_summary", "IT summary fixture", "1", List.of(), List.of(), List.of("resources"), null);
+    }
     @Override public boolean probe(byte[] head) { return true; }
 
     @Override
-    public void read(InputStream in, Sink sink) throws Exception {
+    public void read(InputStream in, Sink sink, String config) throws Exception {
       for (final var key : List.of("NumGap", "NumNull")) sink.declare(decl(key, true));
       for (final var key : List.of("DiscABA", "DiscNull", "DiscGap", "DiscMixed")) sink.declare(decl(key, false));
       sink.declare(decl("Paged", true));
@@ -96,7 +97,7 @@ final class SummaryFixtureIT {
          final var summaryConn = config.connect(true);
          final var activityConn = config.connect(true)) {
       final var importer = new SourceImporter(conn, chunkConn, summaryConn, activityConn, revision, job.attempt());
-      FIXTURE.read(InputStream.nullInputStream(), importer);
+      FIXTURE.read(InputStream.nullInputStream(), importer, null);
       importer.finish(null);
     }
 

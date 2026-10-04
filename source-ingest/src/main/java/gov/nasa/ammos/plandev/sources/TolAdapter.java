@@ -29,15 +29,23 @@ import java.util.Set;
  * without a span, and is otherwise kept as provenance ({@code metadata.actEnd}). Typed values become
  * JSON: lists arrays, structs objects, durations milliseconds, times their TOL text.
  * Other record types are skipped.
+ *
+ * The TOL header records no generation time, product version or name, so this adapter reports no
+ * {@link ProductMetadata}.
  */
 public final class TolAdapter implements SourceAdapter {
   private static final Set<String> NUMERIC_TYPES = Set.of("float", "integer", "duration");
   private static final Set<String> VALUE_TAGS =
       Set.of("DoubleValue", "IntegerValue", "StringValue", "BooleanValue", "DurationValue", "TimeValue");
 
-  @Override public String name() { return "xml_tol"; }
+  private static final Descriptor DESCRIPTOR = new Descriptor(
+      "xml_tol", "XML TOL", "1",
+      List.of(".tol", ".xml", ".tol.gz", ".xml.gz", ".tar", ".tar.gz", ".tgz"),
+      List.of("application/xml", "text/xml"),
+      List.of("resources", "activities"),
+      null);
 
-  @Override public String version() { return "1"; }
+  @Override public Descriptor descriptor() { return DESCRIPTOR; }
 
   @Override
   public boolean probe(byte[] head) {
@@ -45,7 +53,7 @@ public final class TolAdapter implements SourceAdapter {
   }
 
   @Override
-  public void read(InputStream in, Sink sink) throws Exception {
+  public void read(InputStream in, Sink sink, String config) throws Exception {
     final var factory = XMLInputFactory.newInstance();
     factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
     factory.setProperty(XMLInputFactory.IS_COALESCING, true);
