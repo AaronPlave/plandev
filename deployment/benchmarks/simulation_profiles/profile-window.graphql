@@ -1,0 +1,13 @@
+# A bounded viewport fetch expressible with today's Hasura schema: the segment governing the window start
+# ("before") plus the segments starting inside (start, end). Same segment fields as GetProfileSince.
+query GetProfileWindow($datasetId: Int!, $profileId: Int!, $start: interval!, $end: interval!) {
+  before: profile_segment(
+    where: { dataset_id: { _eq: $datasetId }, profile_id: { _eq: $profileId }, start_offset: { _lte: $start } }
+    order_by: { start_offset: desc }
+    limit: 1
+  ) { dataset_id dynamics is_gap profile_id start_offset }
+  window: profile_segment(
+    where: { dataset_id: { _eq: $datasetId }, profile_id: { _eq: $profileId }, start_offset: { _gt: $start, _lt: $end } }
+    order_by: { start_offset: asc }
+  ) { dataset_id dynamics is_gap profile_id start_offset }
+}

@@ -1,0 +1,20 @@
+# The UI's whole-profile fetch (tol-ui src/utilities/gql.ts GET_PROFILE_SINCE, first call: sinceOffset "-00:00:01").
+query GetProfileSince($datasetId: Int!, $name: String!, $sinceOffset: interval!) {
+  profile(where: { _and: { dataset_id: { _eq: $datasetId }, name: { _eq: $name } } }, limit: 1) {
+    dataset_id
+    duration
+    id
+    name
+    profile_segments(
+      where: { _and: { dataset_id: { _eq: $datasetId }, start_offset: { _gt: $sinceOffset } } }
+      order_by: { start_offset: asc }
+    ) {
+      dataset_id
+      dynamics
+      is_gap
+      profile_id
+      start_offset
+    }
+    type
+  }
+}
