@@ -23,12 +23,26 @@ create view merlin.analysis_activity as
     join merlin.simulation sim on sim.id = sd.simulation_id
     left join merlin.activity_directive directive
       on directive.plan_id = sim.plan_id and directive.id = (span.attributes#>>'{directiveId}')::integer
+  union all
+  -- A plan's current directives. Their start is the anchor-resolved approximate start; a directive has no end.
+  -- ponytail: get_approximate_start_time walks anchors per row; fine for plans of a few thousand directives,
+  -- a materialized start per directive if sorting large plans gets slow.
+  select 'plan'::text,
+         ad.plan_id,
+         ad.id,
+         ad.type,
+         coalesce(nullif(ad.name, ''), ad.type),
+         null::text,
+         merlin.get_approximate_start_time(ad.id, ad.plan_id),
+         null::timestamptz
+    from merlin.activity_directive ad
 );
 
 comment on view merlin.analysis_activity is e''
   'Activities from the kinds of source an analysis can compose, in one shape for browsing: an imported '
-  'revision''s activities (source_kind revision, source_ref the revision id) and a simulation dataset''s spans '
-  '(source_kind simulation, source_ref the simulation dataset id). (source_kind, source_ref, activity_id) '
+  'revision''s activities (source_kind revision, source_ref the revision id), a simulation dataset''s spans '
+  '(source_kind simulation, source_ref the simulation dataset id) and a plan''s current directives (source_kind '
+  'plan, source_ref the plan id; no end_time). (source_kind, source_ref, activity_id) '
   'identifies an activity; details stay in source_activity and span.';
 comment on column merlin.analysis_activity.name is e''
   'An imported activity''s own name; for a span, the current name of the directive it came from, else its type.';
