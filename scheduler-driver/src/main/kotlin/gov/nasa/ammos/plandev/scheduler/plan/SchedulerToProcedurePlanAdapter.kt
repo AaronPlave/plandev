@@ -36,10 +36,13 @@ data class SchedulerToProcedurePlanAdapter(
   override fun toAbsolute(rel: Duration) = planningHorizon.startInstant + rel
 
   override fun <A : Any> directives(type: String?, deserializer: (SerializedValue) -> A): Directives<A> {
+    // After a simulation the scheduler plan also holds the simulated children of directives (spawned
+    // activities, topParent set, no directive id). They are not directives; skip them.
+    val directiveActivities = this.schedulerPlan.activities.filter { it.topParent == null }
     val schedulerActivities = if (type == null) {
-      this.schedulerPlan.activities
+      directiveActivities
     } else {
-      this.schedulerPlan.activities.filter { it.type.name == type }
+      directiveActivities.filter { it.type.name == type }
     }
 
     val result = ArrayList<Directive<A>>(schedulerActivities.size)
