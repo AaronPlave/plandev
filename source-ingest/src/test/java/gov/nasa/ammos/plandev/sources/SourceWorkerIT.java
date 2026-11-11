@@ -101,6 +101,52 @@ final class SourceWorkerIT {
   }
 
   @Test
+  void aFailedRevisionDoesNotKeepTheNextOneFromBeingClaimedAndRead() throws Exception {
+    final int missing = queryInt("insert into merlin.source_revision (source_id, adapter, original_path, storage_kind) values ("
+        + sourceId + ", 'xml_tol', '/nonexistent/product.tol.xml', 'pg_chunks_v1') returning id");
+    final int next = newRevision();
+    worker.ingest(worker.claim(missing));
+    worker.ingest(worker.claim(next));
+    assertEquals("failed", queryString("select status from merlin.source_revision where id = " + missing));
+    assertEquals("success", queryString("select status from merlin.source_revision where id = " + next));
+  }
+
+  @Test
+  void anAdapterThatIsNotInstalledFailsTheRevisionNotTheWorker() throws Exception {
+    final int revision = queryInt("insert into merlin.source_revision (source_id, adapter, original_path, storage_kind) values ("
+        + sourceId + ", 'no_such_adapter', '" + edge + "', 'pg_chunks_v1') returning id");
+    worker.ingest(worker.claim(revision));
+    assertEquals("failed|IllegalArgumentException", queryString(
+        "select status || '|' || (error->>'type') from merlin.source_revision where id = " + revision));
+    assertTrue(queryString("select error->>'message' from merlin.source_revision where id = " + revision)
+        .startsWith("No adapter no_such_adapter is installed"));
+    // Not claimed again, and the next revision is unaffected.
+    assertNull(worker.claim(revision));
+    final int next = newRevision();
+    worker.ingest(worker.claim(next));
+    assertEquals("success", queryString("select status from merlin.source_revision where id = " + next));
+  }
+
+  @Test
+  void aRunningIngestKeepsItsAdaptersSeen() throws Exception {
+    // The heartbeat refreshes last_seen_at as well as the revision, so a long import keeps its formats on offer.
+    execute("update merlin.source_adapter set last_seen_at = now() - interval '1 hour' where id = 'xml_tol'");
+    worker.ingest(worker.claim(newRevision()));
+    assertTrue(queryString("select (last_seen_at > now() - interval '1 minute')::text from merlin.source_adapter where id = 'xml_tol'")
+        .equals("true"));
+  }
+
+  @Test
+  void publishingMarksEveryInstalledAdapterSeenNow() throws Exception {
+    execute("update merlin.source_adapter set last_seen_at = now() - interval '1 hour'");
+    try (final var c = config.connect(true)) {
+      worker.adapters.publish(c);
+    }
+    assertEquals(worker.adapters.adapters.size(), queryInt(
+        "select count(*)::int from merlin.source_adapter where last_seen_at > now() - interval '1 minute'"));
+  }
+
+  @Test
   void aLiveAttemptIsNotReclaimed() throws Exception {
     final int revision = newRevision();
     final var job = worker.claim(revision);
