@@ -1,5 +1,6 @@
 package gov.nasa.ammos.plandev.scheduler;
 
+import gov.nasa.ammos.plandev.procedural.scheduling.plan.DeletedAnchorStrategy;
 import gov.nasa.ammos.plandev.procedural.scheduling.plan.EditablePlan;
 import gov.nasa.ammos.plandev.procedural.scheduling.utils.DefaultEditablePlanDriver;
 import gov.nasa.ammos.plandev.procedural.timeline.payloads.activities.DirectiveStart;
@@ -230,5 +231,41 @@ public class EditablePlanTest {
     assertNotEquals(plan.directives(), simResults.inputDirectives());
 
     assertIterableEquals(plan.directives(), plan.simulate().inputDirectives());
+  }
+
+  @Test
+  void directivesExcludeSimulatedChildren() {
+    // DecomposingSpawnParent spawns two children. After a simulation the scheduler plan holds those
+    // children (no directive id); they must not appear as directives or block later edits.
+    final var parent = plan.create(
+        "DecomposingSpawnParent",
+        new DirectiveStart.Absolute(Duration.MINUTE),
+        Map.of("label", SerializedValue.of("parent"))
+    );
+    final var anchored = plan.create(
+        "BiteBanana",
+        new DirectiveStart.Anchor(parent, Duration.HOUR, DirectiveStart.Anchor.AnchorPoint.Start),
+        Map.of("biteSize", SerializedValue.of(1))
+    );
+    plan.commit();
+
+    final var simResults = plan.simulate();
+    assertFalse(simResults.isStale());
+    assertEquals(Set.of(parent, anchored), plan.directives().collect().stream().map($ -> $.id).collect(Collectors.toSet()));
+    assertIterableEquals(plan.directives(), simResults.inputDirectives());
+    assertEquals(
+        new DirectiveStart.Anchor(parent, Duration.HOUR, DirectiveStart.Anchor.AnchorPoint.Start),
+        plan.directives().collect().stream().filter($ -> $.id.equals(anchored)).findFirst().orElseThrow().getStart());
+
+    final var added = plan.create(
+        "BiteBanana",
+        new DirectiveStart.Absolute(Duration.HOUR.times(2)),
+        Map.of("biteSize", SerializedValue.of(2))
+    );
+    plan.delete(parent, DeletedAnchorStrategy.PreserveTree);
+    plan.commit();
+
+    assertEquals(Set.of(anchored, added), plan.directives().collect().stream().map($ -> $.id).collect(Collectors.toSet()));
+    assertFalse(plan.simulate().isStale());
   }
 }
