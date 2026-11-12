@@ -56,19 +56,45 @@ final class PefJsonAdapterTest {
 
     final var allocation = sink.activities.get(0);
     assertEquals(allocation.startMicros(), allocation.endMicros());
-    assertEquals("{\"endTime\":\"2026-147T13:04:04.675\"}", allocation.metadata());
+    // Not silently a zero-length activity: the file's end and the reason are kept with it.
+    assertEquals("{\"endTime\":\"2026-147T13:04:04.675\","
+        + "\"dataQuality\":\"EndTime is before StartTime in the file; drawn with zero duration\"}", allocation.metadata());
     assertTrue(allocation.parameters().contains("\"BOT_EOT\":14400558"), allocation.parameters());
 
     assertTrue(sink.activities.get(1).parameters().contains("\"EVENT_AZ\":180"), sink.activities.get(1).parameters());
     assertEquals("{}", sink.activities.get(1).metadata());
   }
 
+  private static byte[] bytes(String text) { return text.getBytes(StandardCharsets.UTF_8); }
+
+  private static byte[] head(String resource) throws Exception {
+    try (final var in = PefJsonAdapterTest.class.getResourceAsStream(resource)) {
+      return in.readNBytes(4096);
+    }
+  }
+
   @Test
-  void probeTakesAJsonArrayWithInputFilesOnly() {
+  void probeRecognizesPefByItsHeaderOrByItsActivityRecords() throws Exception {
     final var adapter = new PefJsonAdapter();
-    assertTrue(adapter.probe("[\n{\"inputFiles\": [".getBytes(StandardCharsets.UTF_8)));
-    assertFalse(adapter.probe("[{\"a\": 1}]".getBytes(StandardCharsets.UTF_8)));
-    assertFalse(adapter.probe("<XML_TOL>".getBytes(StandardCharsets.UTF_8)));
+    assertTrue(adapter.probe(head("/predicted-events.pef.json")));
+    assertTrue(adapter.probe(bytes("[\n{\"inputFiles\": [")));
+    // No header record: the activity records themselves identify it.
+    assertTrue(adapter.probe(head("/predicted-events-no-header.pef.json")));
+    assertTrue(adapter.probe(bytes("  [{\"__kind\":\"activity\",\"genealogy\":\"a$1X\",\"StartTime\":\"2026-147T00:00:00.000\"}")));
+  }
+
+  @Test
+  void probeRejectsOtherJsonAndOtherFormats() {
+    final var adapter = new PefJsonAdapter();
+    assertFalse(adapter.probe(bytes("[{\"a\": 1}]")));
+    assertFalse(adapter.probe(bytes("[]")));
+    assertFalse(adapter.probe(bytes("[{\"__kind\": \"activity\", \"name\": \"x\"}]")));
+    // A request record alone, or a word that merely appears in a value, is not enough.
+    assertFalse(adapter.probe(bytes("[{\"__kind\": \"request\", \"StartTime\": \"2026-147T16:00:00.000\"}]")));
+    assertFalse(adapter.probe(bytes("[{\"note\": \"inputFiles genealogy activity\"}]")));
+    // The same records outside an array are another kind of file.
+    assertFalse(adapter.probe(bytes("{\"inputFiles\": [], \"__kind\": \"activity\"}")));
+    assertFalse(adapter.probe(bytes("<XML_TOL>")));
   }
 
   @Test

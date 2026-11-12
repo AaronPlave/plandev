@@ -93,4 +93,34 @@ final class ActivityIngestIT {
       return out;
     }
   }
+
+  /** A PEF JSON product through the worker, whichever way its adapter is chosen, and read back as activities. */
+  @Test
+  void importsPefJsonWithOrWithoutItsHeaderAndReadsItsActivities() throws Exception {
+    final int pefSource = Integer.parseInt(query("insert into merlin.source (name, source_type) values ('it: pef', 'pef_json') returning id").get(0));
+    try {
+      for (final var fixture : List.of(List.of("pef_json", "/predicted-events.pef.json"), List.of("auto", "/predicted-events-no-header.pef.json"))) {
+        final var file = Path.of(getClass().getResource(fixture.get(1)).toURI());
+        final int rev = Integer.parseInt(query("insert into merlin.source_revision (source_id, adapter, original_path, storage_kind) values ("
+            + pefSource + ", '" + fixture.get(0) + "', '" + file + "', 'pg_chunks_v1') returning id").get(0));
+        worker.ingest(worker.claim(rev));
+
+        assertEquals(List.of("success|4"), query("select status || '|' || (progress->>'activities') from merlin.source_revision where id = " + rev), fixture.toString());
+        assertEquals(List.of("ALLOCATION|1", "CONDITION|1", "STATION_VIEW|1", "STATION_VIEW_EVENT|1"),
+            query("select type || '|' || count from merlin.source_activity_type where revision_id = " + rev + " order by type collate \"C\""));
+        // Key, type/name, category and typed parameters; the end before the start is zero-length with its reason kept.
+        assertEquals(List.of(
+            "ALO_1$1ALLOCATION|ALLOCATION|DSN|2026-05-27 14:04:04.675+00|2026-05-27 14:04:04.675+00|14400558|EndTime is before StartTime in the file; drawn with zero duration",
+            "VEW_10$1STATION_VIEW|STATION_VIEW|DSN|2026-05-26 20:29:49+00|2026-05-27 04:28:21+00|28712000"),
+            query("set timezone = 'UTC'; select concat_ws('|', source_key, name, category, start_time, end_time, parameters->>case type when 'ALLOCATION' then 'BOT_EOT' else 'RISE_TO_SET' end,"
+                + " metadata->>'dataQuality') from merlin.source_activity where revision_id = " + rev
+                + " and type in ('ALLOCATION', 'STATION_VIEW') order by type"));
+        assertEquals(List.of("revision|STATION_VIEW|DSN"), query(
+            "select concat_ws('|', source_kind, type, category) from merlin.analysis_activity where source_kind = 'revision'"
+                + " and source_ref = " + rev + " and type = 'STATION_VIEW'"));
+      }
+    } finally {
+      query("delete from merlin.source where id = " + pefSource + " returning id");
+    }
+  }
 }

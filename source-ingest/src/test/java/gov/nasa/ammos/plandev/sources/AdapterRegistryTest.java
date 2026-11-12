@@ -53,6 +53,28 @@ final class AdapterRegistryTest {
   }
 
   @Test
+  void pefJsonIsSelectedAutomaticallyAndExplicitlyWithOrWithoutItsHeader() throws Exception {
+    final var registry = AdapterRegistry.load();
+    for (final var resource : List.of("/predicted-events.pef.json", "/predicted-events-no-header.pef.json")) {
+      try (final var in = AdapterRegistryTest.class.getResourceAsStream(resource)) {
+        final var head = in.readNBytes(4096);
+        assertEquals("pef_json", registry.select("auto", head).descriptor().id(), resource);
+        assertEquals("pef_json", registry.select("pef_json", head).descriptor().id(), resource);
+      }
+    }
+  }
+
+  @Test
+  void unrelatedJsonIsNotPefJson() {
+    final var json = "[{\"id\": 1, \"name\": \"x\"}]".getBytes(StandardCharsets.UTF_8);
+    final var registry = AdapterRegistry.load();
+    assertTrue(assertThrows(IllegalArgumentException.class, () -> registry.select("auto", json))
+        .getMessage().startsWith("No installed adapter recognizes this file"));
+    assertEquals("File is not readable by adapter pef_json",
+        assertThrows(IllegalArgumentException.class, () -> registry.select("pef_json", json)).getMessage());
+  }
+
+  @Test
   void anExplicitIdMustBeInstalledAndRecognizeTheFile() {
     final var registry = AdapterRegistry.load();
     assertEquals("No adapter kml is installed (installed: [xml_tol])",

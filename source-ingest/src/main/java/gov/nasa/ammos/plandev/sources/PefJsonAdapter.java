@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Predicted Events Files (PEF) as converted to JSON: a top-level array of records, of which only those with
@@ -21,7 +22,8 @@ import java.util.Map;
  * The key is the genealogy, the type and name are {@code Name}, the category is {@code Group}. Parameters become
  * JSON by their {@code @type}: FLOAT numbers, DURATION ({@code HH:MM:SS[.fff]}) milliseconds (as in TOL), empty
  * ({@code null}-typed) values are dropped, the rest stay text. An {@code EndTime} before its {@code StartTime}
- * (seen on ALLOCATION) is clamped to the start, and the file's value is kept as {@code metadata.endTime}.
+ * (seen on ALLOCATION) is clamped to the start, and the file's value is kept as {@code metadata.endTime} with
+ * a {@code metadata.dataQuality} note saying so.
  *
  * The JSON has no product header, so this adapter reports no {@link ProductMetadata}.
  */
@@ -32,10 +34,23 @@ public final class PefJsonAdapter implements SourceAdapter {
 
   @Override public Descriptor descriptor() { return DESCRIPTOR; }
 
+  /** A PEF record is an object with its own keys; a bare JSON array of other objects is not PEF. */
+  private static final Pattern INPUT_FILES_KEY = Pattern.compile("\"inputFiles\"\\s*:");
+  private static final Pattern ACTIVITY_KIND = Pattern.compile("\"__kind\"\\s*:\\s*\"activity\"");
+  private static final Pattern GENEALOGY_KEY = Pattern.compile("\"genealogy\"\\s*:");
+  private static final Pattern START_TIME_KEY = Pattern.compile("\"StartTime\"\\s*:");
+
+  /**
+   * An array whose head shows either the PEF header record ({@code inputFiles}) or an activity record as the converter
+   * writes it ({@code "__kind": "activity"} with {@code genealogy} and {@code StartTime}). The header is optional, so
+   * it can't be required; any other array of objects, including one with {@code "__kind"} alone, is not taken.
+   */
   @Override
   public boolean probe(byte[] head) {
     final var text = new String(head, StandardCharsets.UTF_8).stripLeading();
-    return text.startsWith("[") && text.contains("\"inputFiles\"");
+    if (!text.startsWith("[")) return false;
+    return INPUT_FILES_KEY.matcher(text).find()
+        || (ACTIVITY_KIND.matcher(text).find() && GENEALOGY_KEY.matcher(text).find() && START_TIME_KEY.matcher(text).find());
   }
 
   @Override
@@ -71,7 +86,11 @@ public final class PefJsonAdapter implements SourceAdapter {
     final long end = TolAdapter.parseTime(endText);
     final Map<String, Object> parameters = new LinkedHashMap<>();
     final Map<String, Object> metadata = new LinkedHashMap<>();
-    if (end < start) metadata.put("endTime", endText);
+    if (end < start) {
+      // Shown as zero-length (an activity can't end before it starts); the file's value and the reason stay in provenance.
+      metadata.put("endTime", endText);
+      metadata.put("dataQuality", "EndTime is before StartTime in the file; drawn with zero duration");
+    }
     for (final JsonValue v : o.getJsonArray("params") == null ? List.<JsonValue>of() : o.getJsonArray("params")) {
       final var param = v.asJsonObject();
       final var value = param.getString("#text", "");
