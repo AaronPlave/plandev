@@ -128,22 +128,34 @@ final class SourceWorkerIT {
   }
 
   @Test
-  void aRunningIngestKeepsItsAdaptersSeen() throws Exception {
-    // The heartbeat refreshes last_seen_at as well as the revision, so a long import keeps its formats on offer.
+  void anIngestRefreshesItsAdaptersSeenThroughItsHeartbeat() throws Exception {
+    // The heartbeat publishes (beating once as the ingest starts), so an ingest keeps its format on offer. This does
+    // not wait out the 5 s interval, so it shows the refresh happens in the ingest, not that it repeats.
+    // Only xml_tol is touched (the database may be shared), and it is refreshed again even if the ingest fails.
     execute("update merlin.source_adapter set last_seen_at = now() - interval '1 hour' where id = 'xml_tol'");
-    worker.ingest(worker.claim(newRevision()));
-    assertTrue(queryString("select (last_seen_at > now() - interval '1 minute')::text from merlin.source_adapter where id = 'xml_tol'")
-        .equals("true"));
+    try {
+      worker.ingest(worker.claim(newRevision()));
+      assertEquals("true", queryString(
+          "select (last_seen_at > now() - interval '1 minute')::text from merlin.source_adapter where id = 'xml_tol'"));
+    } finally {
+      try (final var c = config.connect(true)) {
+        worker.adapters.publish(c);
+      }
+    }
   }
 
   @Test
   void publishingMarksEveryInstalledAdapterSeenNow() throws Exception {
-    execute("update merlin.source_adapter set last_seen_at = now() - interval '1 hour'");
+    // Only the installed adapters' rows are touched: others in a shared database belong to other workers.
+    final var installed = "(" + worker.adapters.adapters.keySet().stream()
+        .map(id -> "'" + id + "'").collect(java.util.stream.Collectors.joining(", ")) + ")";
+    execute("update merlin.source_adapter set last_seen_at = now() - interval '1 hour' where id in " + installed);
     try (final var c = config.connect(true)) {
       worker.adapters.publish(c);
     }
     assertEquals(worker.adapters.adapters.size(), queryInt(
-        "select count(*)::int from merlin.source_adapter where last_seen_at > now() - interval '1 minute'"));
+        "select count(*)::int from merlin.source_adapter where id in " + installed
+            + " and last_seen_at > now() - interval '1 minute'"));
   }
 
   @Test
