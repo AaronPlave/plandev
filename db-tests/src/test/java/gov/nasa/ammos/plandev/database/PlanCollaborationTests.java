@@ -979,6 +979,215 @@ public class PlanCollaborationTests {
   }
 
   @Nested
+  class DuplicateSchedulingProvenanceTests {
+    private record GoalInvocation(
+        int invocationId, int goalId, Integer goalRevision, int priority,
+        boolean enabled, String arguments, boolean simulateAfter) {}
+
+    private int insertGoal(final String name) throws SQLException {
+      try (final var statement = connection.createStatement()) {
+        final var res = statement.executeQuery(
+            //language=sql
+            """
+            with metadata(id, owner) as (
+              insert into scheduler.scheduling_goal_metadata(name, description, owner, updated_by)
+              values ('%s', '', 'PlanCollaborationTests', 'PlanCollaborationTests')
+              returning id, owner
+            )
+            insert into scheduler.scheduling_goal_definition(goal_id, definition, author)
+            select m.id, 'nothing', m.owner from metadata m
+            returning goal_id;
+            """.formatted(name));
+        res.next();
+        return res.getInt(1);
+      }
+    }
+
+    private int addGoalInvocation(final int planId, final int goalId, final String arguments,
+                                  final boolean enabled, final boolean simulateAfter) throws SQLException {
+      try (final var statement = connection.createStatement()) {
+        final var res = statement.executeQuery(
+            //language=sql
+            """
+            insert into scheduler.scheduling_specification_goals(specification_id, goal_id, arguments, enabled, simulate_after)
+            select id, %d, '%s'::jsonb, %b, %b from scheduler.scheduling_specification where plan_id = %d
+            returning goal_invocation_id;
+            """.formatted(goalId, arguments, enabled, simulateAfter, planId));
+        res.next();
+        return res.getInt(1);
+      }
+    }
+
+    private List<GoalInvocation> getGoalInvocations(final int planId) throws SQLException {
+      try (final var statement = connection.createStatement()) {
+        final var res = statement.executeQuery(
+            //language=sql
+            """
+            select g.goal_invocation_id, g.goal_id, g.goal_revision, g.priority, g.enabled, g.arguments, g.simulate_after
+            from scheduler.scheduling_specification_goals g
+            join scheduler.scheduling_specification s on s.id = g.specification_id
+            where s.plan_id = %d
+            order by g.priority;
+            """.formatted(planId));
+        final var invocations = new ArrayList<GoalInvocation>();
+        while (res.next()) {
+          invocations.add(new GoalInvocation(
+              res.getInt(1), res.getInt(2), (Integer) res.getObject(3), res.getInt(4),
+              res.getBoolean(5), res.getString(6), res.getBoolean(7)));
+        }
+        return invocations;
+      }
+    }
+
+    private void setActivityProvenance(final int planId, final int activityId, final int goalId, final int invocationId)
+    throws SQLException {
+      try (final var statement = connection.createStatement()) {
+        statement.executeUpdate(
+            //language=sql
+            """
+            update merlin.activity_directive
+            set source_scheduling_goal_id = %d, source_scheduling_goal_invocation_id = %d
+            where plan_id = %d and id = %d;
+            """.formatted(goalId, invocationId, planId, activityId));
+      }
+    }
+
+    private Integer getActivityInvocation(final int planId, final int activityId) throws SQLException {
+      try (final var statement = connection.createStatement()) {
+        final var res = statement.executeQuery(
+            //language=sql
+            """
+            select source_scheduling_goal_invocation_id from merlin.activity_directive
+            where plan_id = %d and id = %d;
+            """.formatted(planId, activityId));
+        res.next();
+        return (Integer) res.getObject(1);
+      }
+    }
+
+    @Test
+    void duplicateCopiesSchedulingSpecificationAndRemapsProvenance() throws SQLException {
+      final int parent = merlinHelper.insertPlan(missionModelId);
+      final int traverseGoal = insertGoal("traverse");
+      final int downlinkGoal = insertGoal("downlink");
+      final int traverse = addGoalInvocation(parent, traverseGoal, "{\"sites\": [1, 2]}", true, true);
+      final int downlink = addGoalInvocation(parent, downlinkGoal, "{\"margin\": 0.1}", false, false);
+
+      final int traverseOutput = merlinHelper.insertActivity(parent);
+      final int downlinkOutput = merlinHelper.insertActivity(parent);
+      final int handPlaced = merlinHelper.insertActivity(parent);
+      setActivityProvenance(parent, traverseOutput, traverseGoal, traverse);
+      setActivityProvenance(parent, downlinkOutput, downlinkGoal, downlink);
+
+      final int child = duplicatePlan(parent, "Child");
+
+      final var parentInvocations = getGoalInvocations(parent);
+      final var childInvocations = getGoalInvocations(child);
+      assertEquals(2, childInvocations.size());
+      for (int i = 0; i < 2; i++) {
+        final var p = parentInvocations.get(i);
+        final var c = childInvocations.get(i);
+        assertNotEquals(p.invocationId(), c.invocationId());
+        assertEquals(p, new GoalInvocation(p.invocationId(), c.goalId(), c.goalRevision(), c.priority(),
+                                           c.enabled(), c.arguments(), c.simulateAfter()));
+      }
+
+      // Copied goal output points at the child's own invocations; hand-placed work has no invocation.
+      assertEquals(childInvocations.get(0).invocationId(), getActivityInvocation(child, traverseOutput));
+      assertEquals(childInvocations.get(1).invocationId(), getActivityInvocation(child, downlinkOutput));
+      assertNull(getActivityInvocation(child, handPlaced));
+      assertEquals(merlinHelper.getActivity(parent, traverseOutput).sourceSchedulingGoalId(),
+                   merlinHelper.getActivity(child, traverseOutput).sourceSchedulingGoalId());
+
+      // The parent is untouched.
+      assertEquals(traverse, getActivityInvocation(parent, traverseOutput));
+      assertEquals(downlink, getActivityInvocation(parent, downlinkOutput));
+    }
+
+    @Test
+    void duplicateCopiesConstraintSpecification() throws SQLException {
+      final var user = merlinHelper.insertUser("ConstraintSpecDuplicator");
+      final int parent = merlinHelper.insertPlan(missionModelId);
+      final int first = merlinHelper.insertConstraint("first", "c1", user);
+      final int second = merlinHelper.insertConstraint("second", "c2", user);
+      try (final var statement = connection.createStatement()) {
+        statement.executeUpdate(
+            //language=sql
+            """
+            insert into merlin.constraint_specification(plan_id, constraint_id, enabled, arguments, priority)
+            values (%d, %d, true, '{"limit": 80}', 0), (%d, %d, false, '{}', 1);
+            """.formatted(parent, second, parent, first));
+      }
+
+      final int child = duplicatePlan(parent, "Child");
+
+      final String query = //language=sql
+          """
+          select constraint_id, constraint_revision, enabled, arguments, priority
+          from merlin.constraint_specification where plan_id = %d order by priority;
+          """;
+      try (final var statement = connection.createStatement()) {
+        final var res = statement.executeQuery(query.formatted(child));
+        assertTrue(res.next());
+        assertEquals(second, res.getInt("constraint_id"));
+        assertTrue(res.getBoolean("enabled"));
+        assertEquals("{\"limit\": 80}", res.getString("arguments"));
+        assertTrue(res.next());
+        assertEquals(first, res.getInt("constraint_id"));
+        assertFalse(res.getBoolean("enabled"));
+        assertFalse(res.next());
+      }
+    }
+
+    @Test
+    void deletingParentInvocationDoesNotAffectChild() throws SQLException {
+      final int parent = merlinHelper.insertPlan(missionModelId);
+      final int goal = insertGoal("traverse");
+      final int invocation = addGoalInvocation(parent, goal, "{}", true, true);
+      final int output = merlinHelper.insertActivity(parent);
+      setActivityProvenance(parent, output, goal, invocation);
+      final int child = duplicatePlan(parent, "Child");
+      final int childInvocation = getGoalInvocations(child).getFirst().invocationId();
+
+      try (final var statement = connection.createStatement()) {
+        statement.executeUpdate(
+            "delete from scheduler.scheduling_specification_goals where goal_invocation_id = %d;".formatted(invocation));
+      }
+
+      assertNull(getActivityInvocation(parent, output));
+      assertEquals(childInvocation, getActivityInvocation(child, output));
+    }
+
+    @Test
+    void mergeKeepsEachPlansOwnProvenance() throws SQLException {
+      final int parent = merlinHelper.insertPlan(missionModelId);
+      final int goal = insertGoal("traverse");
+      final int parentInvocation = addGoalInvocation(parent, goal, "{}", true, true);
+      final int unchangedOutput = merlinHelper.insertActivity(parent);
+      setActivityProvenance(parent, unchangedOutput, goal, parentInvocation);
+
+      final int child = duplicatePlan(parent, "Child");
+      final int childInvocation = getGoalInvocations(child).getFirst().invocationId();
+      final int newOutput = merlinHelper.insertActivity(child);
+      setActivityProvenance(child, newOutput, goal, childInvocation);
+
+      final int mergeRQ = createMergeRequest(parent, child);
+      beginMerge(mergeRQ);
+
+      // Differing invocation ids alone are not a change.
+      assertTrue(getConflictingActivities(mergeRQ).isEmpty());
+      final var staged = getStagingAreaActivities(mergeRQ);
+      assertTrue(staged.contains(new StagingAreaActivity(unchangedOutput, "none")));
+      assertTrue(staged.contains(new StagingAreaActivity(newOutput, "add")));
+
+      commitMerge(mergeRQ);
+      assertEquals(parentInvocation, getActivityInvocation(parent, unchangedOutput));
+      assertEquals(parentInvocation, getActivityInvocation(parent, newOutput));
+      assertEquals(childInvocation, getActivityInvocation(child, newOutput));
+    }
+  }
+
+  @Nested
   class PlanHistoryTests {
     @Test
     void getPlanHistoryCapturesAllAncestors() throws SQLException {

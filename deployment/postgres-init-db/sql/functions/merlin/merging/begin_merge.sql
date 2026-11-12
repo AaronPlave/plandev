@@ -127,13 +127,13 @@ begin
     select activity_id, 'none'
       from(
         select psa.id as activity_id, name, tags.tag_ids_activity_snapshot(psa.id, merge_base_id),
-               source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments,
+               source_scheduling_goal_id, created_at, start_offset, type, arguments,
                metadata, anchor_id, anchored_to_start
         from merlin.plan_snapshot_activities psa
         where psa.snapshot_id = merge_base_id
     intersect
       select id as activity_id, name, tags.tag_ids_activity_snapshot(psa.id, snapshot_id_supplying),
-             source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments,
+             source_scheduling_goal_id, created_at, start_offset, type, arguments,
              metadata, anchor_id, anchored_to_start
         from merlin.plan_snapshot_activities psa
         where psa.snapshot_id = snapshot_id_supplying) a;
@@ -178,13 +178,13 @@ begin
   select activity_id, 'none'
   from(
         select id as activity_id, name, tags.tag_ids_activity_snapshot(id, merge_base_id),
-               source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments,
+               source_scheduling_goal_id, created_at, start_offset, type, arguments,
                metadata, anchor_id, anchored_to_start
         from merlin.plan_snapshot_activities psa
         where psa.snapshot_id = merge_base_id
         intersect
         select id as activity_id, name, tags.tag_ids_activity_directive(id, plan_id_receiving),
-               source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments,
+               source_scheduling_goal_id, created_at, start_offset, type, arguments,
                metadata, anchor_id, anchored_to_start
         from merlin.activity_directive ad
         where ad.plan_id = plan_id_receiving) a;
@@ -291,7 +291,7 @@ begin
   -- 'modify' against a 'modify' must be checked for equality first.
   with false_modify as (
     select activity_id, name, tags.tag_ids_activity_snapshot(dd.activity_id, psa.snapshot_id) as tags,
-           source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
+           source_scheduling_goal_id, created_at, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
     from merlin.plan_snapshot_activities psa
     join diff_diff dd
       on dd.activity_id = psa.id
@@ -299,7 +299,7 @@ begin
       and (dd.change_type_receiving = 'modify' and dd.change_type_supplying = 'modify')
     intersect
     select activity_id, name, tags.tag_ids_activity_directive(dd.activity_id, ad.plan_id) as tags,
-           source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
+           source_scheduling_goal_id, created_at, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
     from diff_diff dd
     join merlin.activity_directive ad
       on dd.activity_id = ad.id

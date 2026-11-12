@@ -94,26 +94,41 @@ begin
   insert into merlin.activity_directive(
                 id, plan_id, name, source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at,
                 created_by, last_modified_by, start_offset, type, arguments, metadata, anchor_id, anchored_to_start )
-  select  activity_id, plan_id_R, name, source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at,
-          created_by, last_modified_by, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
-   from merlin.merge_staging_area
-  where merge_staging_area.merge_request_id = _request_id
+  -- An added activity's goal invocation belongs to the supplying plan. Attribute it to the receiving plan's
+  -- invocation of the same goal when there is exactly one; otherwise leave the invocation unset.
+  select  activity_id, plan_id_R, name, source_scheduling_goal_id,
+          (select min(rg.goal_invocation_id)
+             from scheduler.scheduling_specification_goals rg
+             join scheduler.scheduling_specification rs on rs.id = rg.specification_id
+            where rs.plan_id = plan_id_R and rg.goal_id = msa.source_scheduling_goal_id
+           having count(*) = 1),
+          created_at, created_by, last_modified_by, start_offset, type, arguments, metadata, anchor_id, anchored_to_start
+   from merlin.merge_staging_area msa
+  where msa.merge_request_id = _request_id
     and change_type = 'add';
 
   -- Modify
   insert into merlin.activity_directive(
     id, plan_id, "name", source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, created_by,
     last_modified_by, start_offset, "type", arguments, metadata, anchor_id, anchored_to_start )
-  select  activity_id, plan_id_R, "name", source_scheduling_goal_id, source_scheduling_goal_invocation_id, created_at, created_by, last_modified_by,
+  -- The mapped invocation is only used when the receiving plan no longer has the activity (a resolved
+  -- delete/modify conflict); an existing activity keeps its own invocation (see the update below).
+  select  activity_id, plan_id_R, "name", source_scheduling_goal_id,
+          (select min(rg.goal_invocation_id)
+             from scheduler.scheduling_specification_goals rg
+             join scheduler.scheduling_specification rs on rs.id = rg.specification_id
+            where rs.plan_id = plan_id_R and rg.goal_id = msa.source_scheduling_goal_id
+           having count(*) = 1),
+          created_at, created_by, last_modified_by,
           start_offset, "type", arguments, metadata, anchor_id, anchored_to_start
-  from merlin.merge_staging_area
-  where merge_staging_area.merge_request_id = _request_id
+  from merlin.merge_staging_area msa
+  where msa.merge_request_id = _request_id
     and change_type = 'modify'
   on conflict (id, plan_id)
   do update
   set name = excluded.name,
       source_scheduling_goal_id = excluded.source_scheduling_goal_id,
-      source_scheduling_goal_invocation_id = excluded.source_scheduling_goal_invocation_id,
+      -- source_scheduling_goal_invocation_id is per plan; keep the receiving plan's.
       created_at = excluded.created_at,
       created_by = excluded.created_by,
       last_modified_by = excluded.last_modified_by,
