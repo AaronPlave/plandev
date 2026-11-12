@@ -26,7 +26,7 @@ final class AdapterRegistryTest {
 
   @Test
   void discoversEveryAdapterOnTheClasspath() {
-    assertEquals(List.of("csv_activities", "xml_tol"), AdapterRegistry.load().adapters.keySet().stream().sorted().toList());
+    assertEquals(List.of("csv_activities", "pef_json", "xml_tol"), AdapterRegistry.load().adapters.keySet().stream().sorted().toList());
   }
 
   @Test

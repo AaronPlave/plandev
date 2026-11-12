@@ -232,7 +232,7 @@ public final class TolAdapter implements SourceAdapter {
   }
 
   /** JSON has no NaN or infinity: those stay text. */
-  private static Object number(String text) {
+  static Object number(String text) {
     try {
       final double v = Double.parseDouble(text);
       if (!Double.isFinite(v)) return text;
