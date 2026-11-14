@@ -5,6 +5,8 @@ import javax.json.JsonValue;
 import javax.json.stream.JsonParser;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,10 +23,15 @@ import java.util.regex.Pattern;
  * category is {@code Group}.</li>
  * <li>{@code sequence_history}: one sequence execution. Type {@code SEQUENCE}, category {@code PEF sequence}, key
  * {@code ActivityId}, name {@code ActivityType}. The sequence that loaded, called or spawned it ({@code ParentId})
- * is {@code metadata.parent}.</li>
+ * is {@code metadata.parent}. When the parent's step list has the {@code load} or {@code activate} step that started
+ * it (the step's {@code id} is this sequence's {@code ActivityId}), that step's position is {@code metadata.step},
+ * its kind {@code metadata.invokedBy}, and the arguments it passed the {@code arguments} parameter. Sequences are
+ * written after the whole file is read, as a child can come before its parent.</li>
  * <li>Each {@code step: "command"} entry of a sequence's {@code commands}: type {@code COMMAND}, category
- * {@code PEF command}, key its {@code id}, with its typed params and its sequence as {@code metadata.parent}. The
- * load and activate steps are not read: the sequence they start has its own record naming this one as its parent.
+ * {@code PEF command}, key its {@code id}, with its typed params, its sequence as {@code metadata.parent} and its
+ * 1-based position in the sequence's step list as {@code metadata.step}: the file's order, which is the sequence's
+ * order (not re-derived from times). Load and activate steps are not records of their own: the sequence they start
+ * has its own record, carrying the step's position.
  * These are the product's record of what was sequenced; they are not editable plan directives.</li>
  * <li>{@code WARNING} and {@code ERROR} timed records (also those before and beyond the product's span): type
  * {@code WARNING} / {@code ERROR}, category {@code PEF reported}, instantaneous, with the message as a parameter and
@@ -41,14 +48,16 @@ import java.util.regex.Pattern;
  *
  * Parameters become JSON by their {@code @type}: FLOAT numbers, DURATION ({@code HH:MM:SS[.fff]}) milliseconds (as
  * in TOL), empty ({@code null}-typed) values are dropped, the rest stay text. An {@code EndTime} before its
- * {@code StartTime} (seen on ALLOCATION) is clamped to the start, and the file's value is kept as
- * {@code metadata.endTime} with a {@code metadata.dataQuality} note saying so.
+ * {@code StartTime} (seen on ALLOCATION) is clamped to the start so it can be drawn, and is marked
+ * {@code metadata.endInvalid: true}, with the file's value as {@code metadata.endTime} and a
+ * {@code metadata.dataQuality} note: the stored end is then not a recorded end, and nothing should be computed
+ * from it.
  *
  * The JSON has no product header, so this adapter reports no {@link ProductMetadata}.
  */
 public final class PefJsonAdapter implements SourceAdapter {
   private static final Descriptor DESCRIPTOR = new Descriptor(
-      "pef_json", "PEF activities (JSON)", "2",
+      "pef_json", "PEF activities (JSON)", "3",
       List.of(".pef.json", ".pef.json.gz"), List.of("application/json"), List.of("activities"), null);
 
   @Override public Descriptor descriptor() { return DESCRIPTOR; }
@@ -82,6 +91,9 @@ public final class PefJsonAdapter implements SourceAdapter {
         throw new IllegalArgumentException("PEF JSON must be an array of records");
       }
       int reported = 0;
+      final List<Sequence> sequences = new ArrayList<>();
+      final Map<String, Step> invocations = new HashMap<>();
+      final Map<String, Integer> commandSteps = new HashMap<>();
       while (p.hasNext()) {
         final var ev = p.next();
         if (ev == JsonParser.Event.END_ARRAY) break;
@@ -90,7 +102,7 @@ public final class PefJsonAdapter implements SourceAdapter {
           if ("activity".equals(record.getString("__kind", null))) {
             sink.activity(activity(record));
           } else if (record.get("sequence_history") instanceof JsonObject sequence) {
-            sequence(sequence, sink);
+            sequences.add(sequence(sequence, sink, invocations, commandSteps));
           } else {
             for (final var kind : TIMED_KINDS) {
               if (record.get(kind) instanceof JsonObject timed && REPORTED_TYPES.contains(timed.getString("@type", ""))) {
@@ -102,14 +114,66 @@ public final class PefJsonAdapter implements SourceAdapter {
           p.skipArray();
         }
       }
+      for (final var sequence : sequences) {
+        final var spawnedBy = spawningCommand(sequence, commandSteps);
+        sink.activity(sequence.record(invocations.get(sequence.key), spawnedBy,
+            spawnedBy == null ? null : commandSteps.get(spawnedBy)));
+      }
     }
+  }
+
+  /** A load or activate step: where in its parent's steps a sequence was started, and with what arguments. */
+  private record Step(int position, String kind, Map<String, Object> arguments) {}
+
+  /**
+   * The command of its parent that spawned a sequence no load or activate step started: the file names such a
+   * sequence {@code <parent id>_<command step>CMD_<n><name>}, so the command is the parent's command with the id
+   * {@code <parent id>_<segment>} when the parent has one by that exact id. Null otherwise.
+   */
+  private static String spawningCommand(Sequence sequence, Map<String, Integer> commandSteps) {
+    final var parent = (String) sequence.metadata.get("parent");
+    if (parent == null || !sequence.key.startsWith(parent + "_")) return null;
+    final var rest = sequence.key.substring(parent.length() + 1);
+    final int end = rest.indexOf('_');
+    final var command = end < 0 ? null : parent + "_" + rest.substring(0, end);
+    return command != null && commandSteps.containsKey(command) ? command : null;
+  }
+
+  /** A sequence held until the file is read, when the step that started it is known. */
+  private record Sequence(String key, String name, long start, long end,
+                          Map<String, Object> parameters, Map<String, Object> metadata) {
+    ActivityRecord record(Step invokedBy, String spawnedBy, Integer spawnStep) {
+      if (invokedBy != null) {
+        metadata.put("step", invokedBy.position);
+        metadata.put("invokedBy", invokedBy.kind);
+        if (!invokedBy.arguments.isEmpty()) parameters.put("arguments", invokedBy.arguments);
+      } else if (spawnedBy != null) {
+        // Placed at the step of the command that spawned it.
+        metadata.put("step", spawnStep);
+        metadata.put("invokedBy", "command");
+        metadata.put("spawnedBy", spawnedBy);
+      }
+      return new ActivityRecord(key, "SEQUENCE", name, "PEF sequence", start, end, "{}",
+          Json.write(parameters), Json.write(metadata));
+    }
+  }
+
+  /** The end to store: the file's, or the start when the file's is before it, marked as not a recorded end. */
+  private static long end(long start, String endText, Map<String, Object> metadata) {
+    final long end = TolAdapter.parseTime(endText);
+    if (end >= start) return end;
+    metadata.put("endInvalid", true);
+    metadata.put("endTime", endText);
+    metadata.put("dataQuality", "EndTime is before StartTime in the file; drawn with zero duration");
+    return start;
   }
 
   private static final List<String> TIMED_KINDS = List.of("timed_record", "before_timed_record", "beyond_timed_record");
   private static final List<String> REPORTED_TYPES = List.of("WARNING", "ERROR");
 
-  /** A sequence execution, then each command it ran. */
-  private static void sequence(JsonObject o, Sink sink) throws Exception {
+  /** Each command a sequence ran, written as read; the sequence itself, returned to be written at the end. */
+  private static Sequence sequence(JsonObject o, Sink sink, Map<String, Step> invocations,
+                                   Map<String, Integer> commandSteps) throws Exception {
     final var key = o.getString("ActivityId", null);
     final var startText = o.getString("StartTime", null);
     final var endText = o.getString("EndTime", null);
@@ -126,15 +190,22 @@ public final class PefJsonAdapter implements SourceAdapter {
     putText(parameters, "parentName", o, "ParentName");
     metadata.put("recordKind", "sequence_history");
     putText(metadata, "parent", o, "ParentId");
-    sink.activity(new ActivityRecord(key, "SEQUENCE", o.getString("ActivityType", key), "PEF sequence",
-        start, Math.max(start, TolAdapter.parseTime(endText)), "{}", Json.write(parameters), Json.write(metadata)));
+    final var sequence = new Sequence(key, o.getString("ActivityType", key), start, end(start, endText, metadata),
+        parameters, metadata);
 
     // One command is an object rather than an array of one; none is an empty array or absent.
     final var commands = o.get("commands") instanceof JsonObject c ? c.get("command") : null;
     final List<? extends JsonValue> steps =
         commands instanceof javax.json.JsonArray array ? array : commands instanceof JsonObject one ? List.of(one) : List.of();
+    int position = 0;
     for (final var value : steps) {
-      if (!(value instanceof JsonObject step) || !"command".equals(step.getString("step", null))) continue;
+      position++;
+      if (!(value instanceof JsonObject step)) continue;
+      final var kind = step.getString("step", null);
+      if (("load".equals(kind) || "activate".equals(kind)) && step.getString("id", null) != null) {
+        invocations.put(step.getString("id"), new Step(position, kind, parameters(step)));
+      }
+      if (!"command".equals(kind)) continue;
       final var id = step.getString("id", null);
       final var commandStart = step.getString("startTime", null);
       if (id == null || commandStart == null) {
@@ -145,10 +216,13 @@ public final class PefJsonAdapter implements SourceAdapter {
       final Map<String, Object> commandMetadata = new LinkedHashMap<>();
       commandMetadata.put("recordKind", "sequence_command");
       commandMetadata.put("parent", key);
+      commandMetadata.put("step", position);
+      commandSteps.put(id, position);
       sink.activity(new ActivityRecord(id, "COMMAND", step.getString("name", id), "PEF command",
-          at, commandEnd == null ? at : Math.max(at, TolAdapter.parseTime(commandEnd)),
+          at, commandEnd == null ? at : end(at, commandEnd, commandMetadata),
           "{}", Json.write(parameters(step)), Json.write(commandMetadata)));
     }
+    return sequence;
   }
 
   /** A WARNING or ERROR the producing tool reported, at the time it reported it. */
@@ -207,16 +281,11 @@ public final class PefJsonAdapter implements SourceAdapter {
       throw new IllegalArgumentException("PEF activity without genealogy, StartTime or EndTime: " + o);
     }
     final long start = TolAdapter.parseTime(startText);
-    final long end = TolAdapter.parseTime(endText);
     final Map<String, Object> metadata = new LinkedHashMap<>();
-    if (end < start) {
-      // Shown as zero-length (an activity can't end before it starts); the file's value and the reason stay in provenance.
-      metadata.put("endTime", endText);
-      metadata.put("dataQuality", "EndTime is before StartTime in the file; drawn with zero duration");
-    }
+    final long end = end(start, endText, metadata);
     final var parameters = parameters(o);
     final var name = o.getString("Name", key);
-    return new ActivityRecord(key, name, name, o.getString("Group", null), start, Math.max(start, end),
+    return new ActivityRecord(key, name, name, o.getString("Group", null), start, end,
         "{}", Json.write(parameters), Json.write(metadata));
   }
 

@@ -57,7 +57,7 @@ final class PefJsonAdapterTest {
     final var allocation = sink.activities.get(1);
     assertEquals(allocation.startMicros(), allocation.endMicros());
     // Not silently a zero-length activity: the file's end and the reason are kept with it.
-    assertEquals("{\"endTime\":\"2026-147T13:04:04.675\","
+    assertEquals("{\"endInvalid\":true,\"endTime\":\"2026-147T13:04:04.675\","
         + "\"dataQuality\":\"EndTime is before StartTime in the file; drawn with zero duration\"}", allocation.metadata());
     assertTrue(allocation.parameters().contains("\"BOT_EOT\":14400558"), allocation.parameters());
 
@@ -90,10 +90,11 @@ final class PefJsonAdapterTest {
          {"timed_record": {"@type": "CMD", "@time": "2026-147T16:00:00.000", "genealogy": "UP_1bgs.lgo_2pass.seq_2CMD"}},
          {"beyond_timed_record": {"@type": "WARNING", "@time": "2026-147T16:00:00.000", "msg": "late"}}
         ]""");
-    assertEquals(List.of("SEQUENCE", "COMMAND", "SEQUENCE", "COMMAND", "SEQUENCE", "ERROR", "WARNING"),
+    // Commands as read; sequences once the file is read, so the step that started each is known.
+    assertEquals(List.of("COMMAND", "COMMAND", "ERROR", "WARNING", "SEQUENCE", "SEQUENCE", "SEQUENCE"),
         sink.activities.stream().map(SourceAdapter.ActivityRecord::type).toList());
 
-    final var sequence = sink.activities.get(0);
+    final var sequence = sink.activities.get(4);
     assertEquals("UP_1bgs.lgo_2pass.seq", sequence.key());
     assertEquals("pass.seq", sequence.name());
     assertEquals("PEF sequence", sequence.category());
@@ -103,35 +104,70 @@ final class PefJsonAdapterTest {
         sequence.parameters());
     assertEquals("{\"recordKind\":\"sequence_history\",\"parent\":\"UP_1bgs.lgo\"}", sequence.metadata());
 
-    // The load step is not a record of its own; the command names its sequence.
-    final var command = sink.activities.get(1);
+    // The load step is not a record of its own; the command names its sequence and its place in it (after the load).
+    final var command = sink.activities.get(0);
     assertEquals("UP_1bgs.lgo_2pass.seq_2CMD", command.key());
     assertEquals("SEQ_EXECUTE", command.name());
     assertEquals("PEF command", command.category());
     assertEquals(TolAdapter.parseTime("2026-147T13:56:13.697"), command.startMicros());
     assertEquals("{\"sequence_name\":\"begin.seq\",\"rate\":2000}", command.parameters());
-    assertEquals("{\"recordKind\":\"sequence_command\",\"parent\":\"UP_1bgs.lgo_2pass.seq\"}", command.metadata());
+    assertEquals("{\"recordKind\":\"sequence_command\",\"parent\":\"UP_1bgs.lgo_2pass.seq\",\"step\":2}", command.metadata());
 
     // No parent is no parent; a numeric engine is kept; an end before the start is clamped; one command is an object.
-    final var root = sink.activities.get(2);
-    assertEquals("{\"recordKind\":\"sequence_history\"}", root.metadata());
+    final var root = sink.activities.get(5);
+    assertEquals("{\"recordKind\":\"sequence_history\",\"endInvalid\":true,\"endTime\":\"2026-146T00:00:00.000\","
+        + "\"dataQuality\":\"EndTime is before StartTime in the file; drawn with zero duration\"}", root.metadata());
     assertTrue(root.parameters().contains("\"engine\":\"-1\""), root.parameters());
     assertTrue(root.parameters().contains("\"sequenceExecutionTime\":\"2026-147T00:00:01.000\""), root.parameters());
     assertEquals(root.startMicros(), root.endMicros());
-    assertEquals("ATR_1CMD", sink.activities.get(3).key());
+    assertEquals("ATR_1CMD", sink.activities.get(1).key());
     // No commands at all, and its name falls back to its id.
-    assertEquals("EMPTY", sink.activities.get(4).name());
+    assertEquals("EMPTY", sink.activities.get(6).name());
 
-    final var error = sink.activities.get(5);
+    final var error = sink.activities.get(2);
     assertEquals("ERROR@2026-147T16:00:00.000#1", error.key());
     assertEquals("PEF reported", error.category());
     assertEquals(error.startMicros(), error.endMicros());
     assertEquals("{\"message\":\"Modeling error\",\"lastResultParentName\":\"pass.seq\"}", error.parameters());
     assertEquals("{\"recordKind\":\"timed_record\",\"related\":\"UP_1bgs.lgo_2pass.seq_2CMD\"}", error.metadata());
     // Same time as the error: the counter keeps the keys apart. Nothing related is named, so none is recorded.
-    final var warning = sink.activities.get(6);
+    final var warning = sink.activities.get(3);
     assertEquals("WARNING@2026-147T16:00:00.000#2", warning.key());
     assertEquals("{\"recordKind\":\"beyond_timed_record\"}", warning.metadata());
+  }
+
+  @Test
+  void aSequenceCarriesThePositionKindAndArgumentsOfTheStepThatStartedItEvenWhenReadFirst() throws Exception {
+    final var sink = read("""
+        [
+         {"sequence_history": {"ParentId": "P", "ActivityId": "P_2child.seq", "ActivityType": "child.seq",
+           "InvocationType": "CALL", "StartTime": "2026-147T00:00:05.000", "EndTime": "2026-147T00:00:06.000", "State": "ABORTED"}},
+         {"sequence_history": {"ParentId": "", "ActivityId": "P", "ActivityType": "parent.seq",
+           "StartTime": "2026-147T00:00:00.000", "EndTime": "2026-147T00:00:10.000", "State": "COMPLETED",
+           "commands": {"command": [
+             {"step": "command", "id": "P_1CMD", "name": "NOOP", "params": [], "startTime": "2026-147T00:00:01.000"},
+             {"step": "activate", "id": "P_2child.seq", "name": "/eng1/seq/child.seq", "to_engine": "0",
+              "params": [{"@name": "L00INT", "@type": "SIGNED_DECIMAL", "#text": "27"}], "time": "2026-147T00:00:04.000"}]}}}
+        ]""");
+    final var child = sink.activities.stream().filter(a -> a.key().equals("P_2child.seq")).findFirst().orElseThrow();
+    assertEquals("{\"recordKind\":\"sequence_history\",\"parent\":\"P\",\"step\":2,\"invokedBy\":\"activate\"}", child.metadata());
+    assertTrue(child.parameters().contains("\"arguments\":{\"L00INT\":\"27\"}"), child.parameters());
+    assertTrue(child.parameters().contains("\"state\":\"ABORTED\""), child.parameters());
+    // A sequence a command spawned is at that command's step, and names it.
+    final var spawned = read("""
+        [
+         {"sequence_history": {"ParentId": "P", "ActivityId": "P_1CMD_1ecm.seq", "ActivityType": "ecm.seq",
+           "InvocationType": "SPAWN", "StartTime": "2026-147T00:00:02.000", "EndTime": "2026-147T00:00:03.000"}},
+         {"sequence_history": {"ParentId": "", "ActivityId": "P", "ActivityType": "parent.seq",
+           "StartTime": "2026-147T00:00:00.000", "EndTime": "2026-147T00:00:10.000",
+           "commands": {"command": [
+             {"step": "command", "id": "P_1CMD", "name": "SEQ_ACTIVATE", "params": [], "startTime": "2026-147T00:00:01.000"}]}}}
+        ]""").activities.stream().filter(a -> a.key().equals("P_1CMD_1ecm.seq")).findFirst().orElseThrow();
+    assertEquals("{\"recordKind\":\"sequence_history\",\"parent\":\"P\",\"step\":1,\"invokedBy\":\"command\",\"spawnedBy\":\"P_1CMD\"}",
+        spawned.metadata());
+    // The root was started by no step of this file.
+    final var parent = sink.activities.stream().filter(a -> a.key().equals("P")).findFirst().orElseThrow();
+    assertEquals("{\"recordKind\":\"sequence_history\"}", parent.metadata());
   }
 
   private static byte[] bytes(String text) { return text.getBytes(StandardCharsets.UTF_8); }

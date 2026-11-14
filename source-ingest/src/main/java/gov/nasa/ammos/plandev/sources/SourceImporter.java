@@ -53,6 +53,8 @@ final class SourceImporter implements SourceAdapter.Sink {
   private PgCopy summaries;
   private PgCopy activities;
   private int activityCount;
+  /** The span of the activity records, in micros: it counts towards the revision's coverage as samples do. */
+  private long activityFirst = Long.MAX_VALUE, activityLast = Long.MIN_VALUE;
   private long samples;
   private long nonFinite;
   private volatile String canceled;
@@ -185,6 +187,8 @@ final class SourceImporter implements SourceAdapter.Sink {
       }
     }
     if ((++activityCount & 0xfff) == 0) checkCanceled();
+    activityFirst = Math.min(activityFirst, a.startMicros());
+    activityLast = Math.max(activityLast, Math.max(a.startMicros(), a.endMicros()));
     activities.row(11).int4(revisionId).int4(activityCount - 1).text(a.key()).text(a.type()).text(a.name())
         .text(emptyToNull(a.category())).timestamptz(a.startMicros()).timestamptz(Math.max(a.startMicros(), a.endMicros()))
         .jsonb(a.attributes()).jsonb(a.parameters()).jsonb(a.metadata());
@@ -213,7 +217,8 @@ final class SourceImporter implements SourceAdapter.Sink {
   }
 
   private void publish(Instant declaredEnd, String keptLevels) throws SQLException {
-    long first = Long.MAX_VALUE, last = Long.MIN_VALUE;
+    // An activity-only product (a PEF) has no samples; its records still say what time it covers.
+    long first = activityFirst, last = activityLast;
     try (final var st = conn.prepareStatement("""
         update merlin.source_resource
            set sample_count = ?, coverage_start = ?, coverage_end = ?, value_min = ?, value_max = ?, storage = ?::jsonb
