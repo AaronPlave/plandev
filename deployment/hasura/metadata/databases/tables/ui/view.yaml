@@ -3,20 +3,30 @@ table:
   schema: ui
 configuration:
   custom_name: "view"
+computed_fields:
+  - name: analysis_layout
+    definition:
+      function:
+        name: view_analysis_layout
+        schema: ui
+    comment: A layout saved from an Analysis, used from an Analysis rather than opened on a Plan
 select_permissions:
   - role: aerie_admin
     permission:
       columns: '*'
+      computed_fields: [analysis_layout]
       filter: {}
       allow_aggregations: true
   - role: user
     permission:
       columns: '*'
+      computed_fields: [analysis_layout]
       filter: {}
       allow_aggregations: true
   - role: viewer
     permission:
       columns: '*'
+      computed_fields: [analysis_layout]
       filter: {}
       allow_aggregations: true
 insert_permissions:

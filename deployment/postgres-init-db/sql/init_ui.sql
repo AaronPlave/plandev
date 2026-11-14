@@ -15,4 +15,7 @@ begin;
   \ir tables/ui/extension_roles.sql
   \ir tables/ui/view.sql
   \ir tables/ui/analysis.sql
+
+  -- Functions
+  \ir functions/ui/view_analysis_layout.sql
 end;
