@@ -11,6 +11,7 @@ create table merlin.source (
   source_type text not null,
   metadata jsonb not null default '{}'::jsonb,
   owner text,
+  origin text,
   created_at timestamptz not null default now(),
 
   constraint source_synthetic_key
@@ -24,6 +25,12 @@ create table merlin.source (
 
 comment on table merlin.source is e''
   'A stable, logical imported data product. Its contents are its revisions.';
+create unique index source_origin_unique on merlin.source (owner, origin) where origin is not null;
+
+comment on column merlin.source.origin is e''
+  'Where the source''s content comes from, when that is a stable place rather than an upload, e.g. '
+  '"workspace:<workspace id>:<path>" for a SeqDev workspace file. Its identity: unique per owner, so re-importing '
+  'from the same place adds a revision to the same source, and nothing else (a name, a content hash) is used to find it.';
 comment on column merlin.source.source_type is e''
   'The kind of product, e.g. "xml_tol". Informational; each revision names the adapter that read it.';
 

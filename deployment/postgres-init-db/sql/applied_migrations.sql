@@ -46,3 +46,4 @@ call migrations.mark_migration_applied(41);
 call migrations.mark_migration_applied(42);
 call migrations.mark_migration_applied(43);
 call migrations.mark_migration_applied(44);
+call migrations.mark_migration_applied(45);

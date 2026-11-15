@@ -57,7 +57,9 @@ describe('seqn merging', () => {
         '@METADATA "timeSorted" true',
         '',
         'A2025-001T00:00:00.000 CMD_NO_OP',
+        '@METADATA "simulatedActivityId" 1',
         'A2025-001T00:00:01.000 CMD_NO_OP',
+        '@METADATA "simulatedActivityId" 2',
         '',
       ].join('\n'),
     );
@@ -73,6 +75,36 @@ describe('seqn merging', () => {
         '@METADATA "timeSorted" true',
         '',
         'A2025-001T00:00:00.000 CMD_NO_OP',
+        '@METADATA "simulatedActivityId" 1',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('says which activity each command came from, wherever sorting puts it', async () => {
+    const mergedSequence = seqnBuilder(
+      [
+        { ...expandedActivities[0], expansionResult: 'A2025-001T00:00:05 CMD_B\nA2025-001T00:00:00 CMD_A' },
+        { ...expandedActivities[1], expansionResult: 'A2025-001T00:00:01 CMD_C\n@METADATA "note" "mine"' },
+      ],
+      'test',
+      {},
+      1,
+    );
+    expect(mergedSequence).toEqual(
+      [
+        '@ID "test"',
+        '@METADATA "planId" 1',
+        '@METADATA "simulationDatasetId" 1',
+        '@METADATA "timeSorted" true',
+        '',
+        'A2025-001T00:00:00.000 CMD_A',
+        '@METADATA "simulatedActivityId" 1',
+        'A2025-001T00:00:01.000 CMD_C',
+        '@METADATA "note" "mine"',
+        '@METADATA "simulatedActivityId" 2',
+        'A2025-001T00:00:05.000 CMD_B',
+        '@METADATA "simulatedActivityId" 1',
         '',
       ].join('\n'),
     );

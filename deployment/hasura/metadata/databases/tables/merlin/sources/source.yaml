@@ -30,13 +30,13 @@ select_permissions:
 insert_permissions:
   - role: aerie_admin
     permission:
-      columns: [name, source_type, metadata]
+      columns: [name, source_type, metadata, origin]
       check: {}
       set:
         owner: "x-hasura-user-id"
   - role: user
     permission:
-      columns: [name, source_type, metadata]
+      columns: [name, source_type, metadata, origin]
       check: {}
       set:
         owner: "x-hasura-user-id"

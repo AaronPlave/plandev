@@ -42,7 +42,11 @@ export const seqJsonBuilder: SeqJsonBuilder = (expandedActivities, seqId, seqMet
        * TODO: we argue that this is actually ideal behavior, but it warrants discussion.
        */
       previousTime = ai.startTime;
-      for (const command of ai.expansionResult) {
+      // Each command says which simulated activity it was expanded from: known here, and only here, for certain.
+      const expansionResult = ai.expansionResult.map(command =>
+        command.METADATA({ ...(command.GET_METADATA() ?? {}), simulatedActivityId: ai.id }),
+      ) as Command[];
+      for (const command of expansionResult) {
         const currentCommand = command as (CommandStem<{} | []> | LoadStep | ActivateStep);
 
         // If any command is epoch-relative or command complete, we can't sort
@@ -69,7 +73,7 @@ export const seqJsonBuilder: SeqJsonBuilder = (expandedActivities, seqId, seqMet
         }
       }
 
-      allCommands = allCommands.concat(ai.expansionResult as Command[]);
+      allCommands = allCommands.concat(expansionResult);
       // Keep track of the number of times we add commands to the allCommands list.
       activityInstanceCount++;
     }
