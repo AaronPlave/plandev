@@ -90,4 +90,41 @@ final class SeqJsonAdapterTest {
     assertFalse(adapter.probe("[{\"inputFiles\":[]}]".getBytes(StandardCharsets.UTF_8)));
     assertFalse(adapter.probe("{\"id\":\"x\",\"steps\":[1,2]}".getBytes(StandardCharsets.UTF_8)));
   }
+
+  @Test
+  void acceptsAnEmptySequence() throws Exception {
+    final var sink = read("{\"id\": \"empty\", \"metadata\": {}, \"steps\": []}");
+    assertTrue(sink.activities.isEmpty());
+    assertTrue(Json.write(sink.product.mission()).contains("\"steps\":[]"));
+  }
+
+  @Test
+  void rejectsMalformedStructureInsteadOfImportingLess() {
+    for (final var json : List.of(
+        "{\"id\": \"s\", \"steps\": {}}",
+        "{\"id\": \"s\", \"steps\": [42]}",
+        "{\"id\": \"s\", \"steps\": [{\"stem\": \"NO_TYPE\"}]}",
+        "{\"id\": \"s\", \"steps\": [{\"type\": \"command\", \"stem\": \"X\", \"time\": \"A2026-001\"}]}",
+        "{\"id\": \"s\", \"steps\": [{\"type\": \"command\", \"stem\": \"X\", \"args\": {\"a\": 1}}]}",
+        "{\"id\": \"s\", \"requests\": [{\"name\": \"r\"}]}",
+        "{\"id\": \"s\", \"immediate_commands\": [\"X\"]}",
+        "{\"id\": 7, \"steps\": []}")) {
+      final var thrown = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> read(json), json);
+      assertTrue(thrown.getMessage().startsWith("seqJSON"), thrown.getMessage());
+    }
+  }
+
+  @Test
+  void flagsUnreadableRelativeTagsAndUnknownKindsButKeepsThem() throws Exception {
+    final var sink = read("""
+        {"id": "v", "steps": [
+          {"type": "command", "stem": "A", "time": {"type": "COMMAND_RELATIVE", "tag": "soon"}, "args": []},
+          {"type": "note", "text": "a variant's own step", "time": {"type": "COMMAND_COMPLETE"}},
+          {"type": "command", "stem": "B", "time": {"type": "COMMAND_RELATIVE", "tag": "001T00:00:01.5"}, "args": []}
+        ]}""");
+    final var mission = Json.write(sink.product.mission());
+    assertTrue(mission.contains("\"dataQuality\":\"Its COMMAND_RELATIVE time tag could not be read\""), mission);
+    assertTrue(mission.contains("\"dataQuality\":\"Not a step kind seqJSON defines: kept as written\""), mission);
+    assertEquals(2, mission.split("dataQuality").length - 1, mission);
+  }
 }

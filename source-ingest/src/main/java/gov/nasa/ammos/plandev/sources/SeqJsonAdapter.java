@@ -65,8 +65,9 @@ public final class SeqJsonAdapter implements SourceAdapter {
     try (final var reader = javax.json.Json.createReader(in)) {
       sequence = reader.readObject();
     }
-    final var id = sequence.getString("id", null);
+    final var id = sequence.get("id") instanceof JsonString s ? s.getString() : null;
     if (id == null) throw new IllegalArgumentException("seqJSON without an id");
+    validate(sequence);
 
     final List<Map<String, Object>> steps = new ArrayList<>();
     final List<ActivityRecord> timed = new ArrayList<>();
@@ -85,6 +86,12 @@ public final class SeqJsonAdapter implements SourceAdapter {
         untimedKinds.add(time == null ? "none" : time.getString("type", "none"));
         if (time != null && "ABSOLUTE".equals(time.getString("type", null))) {
           described.put("dataQuality", "Its ABSOLUTE time tag could not be read; not drawn");
+        } else if (time != null && RELATIVE_TYPES.contains(time.getString("type", ""))
+            && !RELATIVE_TAG.matcher(time.getString("tag", "")).matches()) {
+          described.put("dataQuality", "Its " + time.getString("type") + " time tag could not be read");
+        }
+        if (!STEP_KINDS.contains(step.getString("type")) && !described.containsKey("dataQuality")) {
+          described.put("dataQuality", "Not a step kind seqJSON defines: kept as written");
         }
         continue;
       }
@@ -113,12 +120,14 @@ public final class SeqJsonAdapter implements SourceAdapter {
       if (!generatedFrom.isEmpty()) mission.put("generatedFrom", generatedFrom);
     }
     mission.put("steps", steps);
-    mission.put("timing", Map.of(
-        "absoluteSteps", timed.size(),
-        "otherSteps", untimedKinds.size(),
-        "note", timed.size() == steps.size()
-            ? "Every step has an absolute time"
-            : "Steps without an ABSOLUTE time are listed in order only; no time is made up for them"));
+    // In a fixed order (Map.of's iteration order changes from run to run).
+    final Map<String, Object> timing = new LinkedHashMap<>();
+    timing.put("absoluteSteps", timed.size());
+    timing.put("otherSteps", untimedKinds.size());
+    timing.put("note", timed.size() == steps.size()
+        ? "Every step has an absolute time"
+        : "Steps without an ABSOLUTE time are listed in order only; no time is made up for them");
+    mission.put("timing", timing);
     if (sequence.get("requests") instanceof JsonArray requests && !requests.isEmpty()) {
       final List<Map<String, Object>> described = new ArrayList<>();
       for (final var value : requests) {
@@ -153,6 +162,58 @@ public final class SeqJsonAdapter implements SourceAdapter {
           Json.object("recordKind", "authored_sequence",
               "dataQuality", "Spans its " + timed.size() + " absolute-timed step(s) of " + steps.size()
                   + "; not when it ran")));
+    }
+  }
+
+  /** The step kinds seqJSON defines; another kind (a language variant's) is kept as written and said to be unknown. */
+  private static final List<String> STEP_KINDS =
+      List.of("command", "activate", "load", "ground_block", "ground_event", "request");
+  private static final List<String> RELATIVE_TYPES = List.of("COMMAND_RELATIVE", "EPOCH_RELATIVE", "BLOCK_RELATIVE");
+  /** A relative tag: [+|-][DDDT]HH:MM:SS[.f]. */
+  private static final Pattern RELATIVE_TAG = Pattern.compile("[+-]?(\\d{3}T)?\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?");
+
+  /**
+   * The structure the import relies on, or an IllegalArgumentException naming what is wrong, so a file that is not a
+   * readable sequence fails its import instead of being reported as an (emptier) sequence. An empty sequence is valid.
+   */
+  static void validate(JsonObject sequence) {
+    if (sequence.containsKey("metadata") && !(sequence.get("metadata") instanceof JsonObject)) {
+      throw new IllegalArgumentException("seqJSON metadata is not an object");
+    }
+    validateSteps(sequence, "steps", "steps");
+    validateSteps(sequence, "immediate_commands", "immediate_commands");
+    if (sequence.containsKey("requests")) {
+      if (!(sequence.get("requests") instanceof JsonArray requests)) {
+        throw new IllegalArgumentException("seqJSON requests is not a list");
+      }
+      for (int i = 0; i < requests.size(); i++) {
+        if (!(requests.get(i) instanceof JsonObject request) || !(request.get("name") instanceof JsonString)) {
+          throw new IllegalArgumentException("seqJSON requests[" + i + "] is not a request with a name");
+        }
+        if (!(request.get("steps") instanceof JsonArray)) {
+          throw new IllegalArgumentException("seqJSON requests[" + i + "] has no steps list");
+        }
+        validateSteps(request, "steps", "requests[" + i + "].steps");
+      }
+    }
+  }
+
+  private static void validateSteps(JsonObject parent, String field, String path) {
+    if (!parent.containsKey(field)) return;
+    if (!(parent.get(field) instanceof JsonArray steps)) {
+      throw new IllegalArgumentException("seqJSON " + path + " is not a list");
+    }
+    for (int i = 0; i < steps.size(); i++) {
+      if (!(steps.get(i) instanceof JsonObject step) || !(step.get("type") instanceof JsonString)) {
+        throw new IllegalArgumentException("seqJSON " + path + "[" + i + "] is not a step with a type");
+      }
+      if (step.containsKey("time")
+          && !(step.get("time") instanceof JsonObject time && time.get("type") instanceof JsonString)) {
+        throw new IllegalArgumentException("seqJSON " + path + "[" + i + "] has a time that is not a time tag");
+      }
+      if (step.containsKey("args") && !(step.get("args") instanceof JsonArray)) {
+        throw new IllegalArgumentException("seqJSON " + path + "[" + i + "] has arguments that are not a list");
+      }
     }
   }
 
