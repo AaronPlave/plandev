@@ -26,7 +26,7 @@ final class AdapterRegistryTest {
 
   @Test
   void discoversEveryAdapterOnTheClasspath() {
-    assertEquals(List.of("csv_activities", "pef_json", "xml_tol"), AdapterRegistry.load().adapters.keySet().stream().sorted().toList());
+    assertEquals(List.of("csv_activities", "pef_json", "seq_json", "xml_tol"), AdapterRegistry.load().adapters.keySet().stream().sorted().toList());
   }
 
   @Test
@@ -61,6 +61,13 @@ final class AdapterRegistryTest {
         assertEquals("pef_json", registry.select("auto", head).descriptor().id(), resource);
         assertEquals("pef_json", registry.select("pef_json", head).descriptor().id(), resource);
       }
+    }
+  }
+
+  @Test
+  void seqJsonIsSelectedAutomatically() throws Exception {
+    try (final var in = AdapterRegistryTest.class.getResourceAsStream("/seqdev-ban00001.seq.json")) {
+      assertEquals("seq_json", AdapterRegistry.load().select("auto", in.readNBytes(4096)).descriptor().id());
     }
   }
 

@@ -3,7 +3,9 @@ create function ui.view_analysis_layout(v ui.view)
   stable
   language sql
 as $$
-  select exists (
+  -- Said by the layout itself (definition.analysisLayout, which also describes its sources), so one with no data
+  -- layers yet, or only guides, is still a layout. Views saved before that are recognized by their layers.
+  select v.definition ? 'analysisLayout' or exists (
     select 1
       from jsonb_array_elements(coalesce(v.definition -> 'plan' -> 'timelines', '[]')) t,
            jsonb_array_elements(coalesce(t -> 'rows', '[]')) r,

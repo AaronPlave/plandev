@@ -97,6 +97,7 @@ begin;
   -- Functions
   \ir functions/merlin/reanchoring_functions.sql
   \ir functions/merlin/external_events/subtract_later_ranges.sql
+  \ir functions/merlin/sources/source_activity_step.sql
 
   -- Snapshots
   \ir functions/merlin/snapshots/create_snapshot.sql

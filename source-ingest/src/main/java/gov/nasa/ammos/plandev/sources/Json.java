@@ -37,7 +37,10 @@ final class Json {
   }
 
   private static void write(StringBuilder sb, Object v) {
-    if (v == null) {
+    if (v instanceof javax.json.JsonValue json) {
+      // Already JSON (a value read from a file), written as read.
+      sb.append(json);
+    } else if (v == null) {
       sb.append("null");
     } else if (v instanceof String s) {
       string(sb, s);

@@ -12,20 +12,30 @@ object_relationships:
         schema: merlin
       column_mapping:
         revision_id: id
+computed_fields:
+  - name: step
+    definition:
+      function:
+        name: source_activity_step
+        schema: merlin
+    comment: The record's place among its parent's steps, as its product gives it (metadata.step)
 # Written only by the ingest worker.
 select_permissions:
   - role: aerie_admin
     permission:
       columns: '*'
+      computed_fields: [step]
       filter: {}
       allow_aggregations: true
   - role: user
     permission:
       columns: '*'
+      computed_fields: [step]
       filter: {}
       allow_aggregations: true
   - role: viewer
     permission:
       columns: '*'
+      computed_fields: [step]
       filter: {}
       allow_aggregations: true
