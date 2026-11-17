@@ -1,0 +1,49 @@
+# Optional F Prime toolchain service for SeqDev (see README.md in this directory).
+# Add it to a deployment or a development stack after building the image:
+#   docker build -t plandev-fprime-toolchain:dev deployment/fprime/toolchain
+#   docker compose -f docker-compose.yml -f <path to>/fprime/docker-compose-fprime.yml up -d
+# It runs untrusted project code (Rust build scripts and proc macros) in its own container, on its
+# own network, which only the workspace service (project files, access checks) and the action
+# server (builds) share with it.
+services:
+  fprime_toolchain:
+    image: "${FPRIME_TOOLCHAIN_IMAGE:-plandev-fprime-toolchain:dev}"
+    container_name: "${FPRIME_TOOLCHAIN_CONTAINER_NAME:-plandev_fprime_toolchain}"
+    environment:
+      WORKSPACE_URL: http://plandev_workspace:28000
+      FPRIME_MAX_SESSIONS: "${FPRIME_MAX_SESSIONS:-5}"
+      FPRIME_MAX_SESSIONS_PER_USER: "${FPRIME_MAX_SESSIONS_PER_USER:-3}"
+      FPRIME_IDLE_SECONDS: "${FPRIME_IDLE_SECONDS:-900}"
+      FPRIME_MAX_BUILDS: "${FPRIME_MAX_BUILDS:-2}"
+      FPRIME_BUILD_TIMEOUT_SECONDS: "${FPRIME_BUILD_TIMEOUT_SECONDS:-600}"
+      FPRIME_PROCESS_MAX_DATA_BYTES: "${FPRIME_PROCESS_MAX_DATA_BYTES:-0}"
+      FPRIME_CACHE_DAYS: "${FPRIME_CACHE_DAYS:-14}"
+    # 9257: rust-analyzer WebSockets, for browsers. The build port (9258) is internal only.
+    ports: ["${FPRIME_LSP_PORT:-9257}:9257"]
+    networks: [fprime_toolchain]
+    volumes: ["fprime_toolchain_cache:/cache"]
+    # exec: projects carry their own linker wrapper (.cargo/wasm-link).
+    tmpfs: ["/sessions:size=1g,mode=0711,exec", "/tmp:size=256m"]
+    read_only: true
+    init: true
+    # Root inside the container only to give each PlanDev user their own uid; no other privileges.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, KILL, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: "${FPRIME_TOOLCHAIN_MEMORY:-6g}"
+    cpus: "${FPRIME_TOOLCHAIN_CPUS:-4}"
+    pids_limit: 4096
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9258/status')"]
+      interval: 30s
+    restart: unless-stopped
+  plandev_action:
+    networks: [default, fprime_toolchain]
+  plandev_workspace:
+    networks: [default, fprime_toolchain]
+
+networks:
+  fprime_toolchain: {}
+
+volumes:
+  fprime_toolchain_cache: {}

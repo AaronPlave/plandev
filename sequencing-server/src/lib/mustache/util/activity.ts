@@ -1,8 +1,10 @@
 import type { SimulatedActivity } from "../../batchLoaders/simulatedActivityBatchLoader";
 
-// Structured values as JSON: `String()` would turn them into "[object Object]".
+// Structured values (arrays, plain objects) as JSON: `String()` would turn them into "[object Object]".
+// Everything else, including Temporal values, keeps its own string form.
 function stringifyValue(value: unknown): string {
-    return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)
+    const structured = Array.isArray(value) || (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype)
+    return structured ? JSON.stringify(value) : String(value)
 }
 
 // converts SimulatedActivity into something mustache plays well with

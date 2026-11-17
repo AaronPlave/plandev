@@ -1,0 +1,5 @@
+; Each command below is wrong in a way fprime-seqgen 4.4 would not report (or would crash on):
+; the dictionary check in the editor and in the F Prime compile Action rejects all three.
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP_STRING
+R00:00:01 CdhCore.cmdDisp.CMD_NO_OP_STRING "a" "b"
+R00:00:01 MathProject.mathSender.DO_MATH 1e39, ADD, 2.0

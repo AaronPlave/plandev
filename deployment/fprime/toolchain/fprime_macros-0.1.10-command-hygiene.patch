@@ -1,0 +1,11 @@
+--- a/src/command.rs
++++ b/src/command.rs
+@@ -61,7 +61,7 @@
+             __opcode.serialize_to(__encoded, &mut __offset);
+             #(#serialize)*
+ 
+-            unsafe { command(__encoded.get_unchecked(0..__offset)) }
++            unsafe { ::fprime_core::command(__encoded.get_unchecked(0..__offset)) }
+         }
+     };
+ 

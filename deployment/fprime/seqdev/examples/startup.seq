@@ -1,0 +1,6 @@
+; F Prime standard sequence for the Math example deployment (fprime-seqgen syntax).
+; R = relative to the previous command (hh:mm:ss[.frac]); A = absolute (YYYY-DDDTHH:MM:SS, seconds since the Unix epoch).
+R00:00:00 CdhCore.cmdDisp.CMD_NO_OP
+R00:00:01 CdhCore.cmdDisp.CMD_NO_OP_STRING "hello from SeqDev"
+R00:00:01 MathProject.mathSender.DO_MATH 1.5, ADD, 2.0
+R00:00:05 MathProject.mathReceiver.FACTOR_PRM_SET 3.25

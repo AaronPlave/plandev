@@ -1,0 +1,18 @@
+# The crates the toolchain image vendors for offline sequence builds: what `fprime-wasm init`
+# projects depend on. Cargo.lock pins every transitive version. To move to another fprime-wasm
+# release: change the versions here and in the Dockerfile ARG, then regenerate the lock file with
+# `cargo generate-lockfile` (needs network) and update the patch if it no longer applies.
+[package]
+name = "fprime-toolchain-vendor"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fprime_core = "=0.1.10"
+
+[build-dependencies]
+fprime_build = "=0.1.10"
+
+[dev-dependencies]
+fprime_test = "=0.1.10"

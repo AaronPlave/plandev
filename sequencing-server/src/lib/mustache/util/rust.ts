@@ -25,17 +25,44 @@ export function rustString(value: unknown): string {
   return `"${escaped}"`;
 }
 
-export function rustInteger(value: unknown): string {
+const INTEGER_TYPES: Record<string, [bigint, bigint]> = Object.fromEntries(
+  [8, 16, 32, 64].flatMap(bits => [
+    [`u${bits}`, [0n, 2n ** BigInt(bits) - 1n]],
+    [`i${bits}`, [-(2n ** BigInt(bits - 1)), 2n ** BigInt(bits - 1) - 1n]],
+  ]),
+);
+const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * An integer literal. With a type (`{{rust-int v "u8"}}`) the value must fit it. Activity
+ * arguments reach templates as JavaScript numbers, so integers beyond ±2^53 may already have been
+ * rounded: those are refused rather than silently changed.
+ */
+export function rustInteger(value: unknown, type?: string): string {
   const text = String(value).trim();
   if (!/^-?\d+$/.test(text)) fail('rust-int', value, 'an integer');
-  return text;
+  const n = BigInt(text);
+  if (n > SAFE || n < -SAFE) fail('rust-int', value, 'exactly representable (|n| ≤ 2^53 - 1); activity values are doubles');
+  if (type !== undefined) {
+    const range = INTEGER_TYPES[type] ?? fail('rust-int', type, `an integer type (${Object.keys(INTEGER_TYPES).join(', ')})`);
+    if (n < range[0] || n > range[1]) fail('rust-int', value, `in range for ${type} [${range[0]}, ${range[1]}]`);
+  }
+  return n.toString();
 }
 
-export function rustFloat(value: unknown): string {
-  const n = Number(String(value).trim());
-  if (String(value).trim() === '' || !Number.isFinite(n)) fail('rust-float', value, 'a finite number');
-  const text = String(n);
-  return /[.eE]/.test(text) ? text : `${text}.0`;
+const F32_MAX = 3.4028234663852886e38;
+
+/** A float literal (always with `.`/`e`, so Rust reads it as a float). `"f32"` checks the range. */
+export function rustFloat(value: unknown, type?: string): string {
+  const text = String(value).trim();
+  const n = Number(text);
+  if (text === '' || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(text) || !Number.isFinite(n)) {
+    fail('rust-float', value, 'a finite decimal number');
+  }
+  if (type !== undefined && type !== 'f32' && type !== 'f64') fail('rust-float', type, 'f32 or f64');
+  if (type === 'f32' && Math.abs(n) > F32_MAX) fail('rust-float', value, 'in range for f32');
+  const literal = String(n);
+  return /[.eE]/.test(literal) ? literal : `${literal}.0`;
 }
 
 export function rustBool(value: unknown): string {
@@ -51,24 +78,74 @@ export function rustIdent(value: unknown): string {
   return text;
 }
 
+const ELEMENT: Record<string, (v: unknown, type?: string) => string> = {
+  bool: rustBool,
+  float: rustFloat,
+  ident: rustIdent,
+  int: rustInteger,
+  string: v => rustString(typeof v === 'string' ? v : fail('rust-array', v, 'a string')),
+};
+
 /**
- * Microseconds since the Unix epoch, for `asleep(..)`. F Prime's sequencer interprets the
- * value in the deployment's time base: correct only where that base is UTC/Unix time.
+ * An array literal from an array-valued activity argument: `{{rust-array v "float" "f32"}}`.
+ * Every element is rendered by the named element helper. Structs have no generic Rust literal form
+ * in the generated API, so struct-valued arguments are refused.
  */
-export function rustEpochMicros(instant: unknown): string {
+export function rustArray(value: unknown, kind: string, type?: string): string {
+  let items: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      items = JSON.parse(value);
+    } catch {
+      fail('rust-array', value, 'an array');
+    }
+  }
+  if (!Array.isArray(items)) fail('rust-array', value, 'an array');
+  const element = ELEMENT[kind] ?? fail('rust-array', kind, `an element kind (${Object.keys(ELEMENT).join(', ')})`);
+  return `[${items.map(item => element(typeof item === 'object' && item !== null ? fail('rust-array', item, 'a scalar') : item, type)).join(', ')}]`;
+}
+
+/**
+ * Microseconds from the deployment's time epoch, for `asleep(..)`. fprime-wasm defines the value
+ * as "microseconds from system epoch", and which epoch (and clock) that is depends on the
+ * deployment's time base, so the template must say: `{{rust-epoch-us startTime epoch="1970-01-01T00:00:00Z"}}`.
+ * The difference is counted in POSIX (UTC, no leap second) microseconds.
+ */
+export function rustEpochMicros(instant: unknown, epoch: unknown): string {
+  if (epoch === undefined || epoch === null || epoch === '') {
+    throw new Error(
+      'rust-epoch-us: give the deployment\'s time epoch, e.g. {{rust-epoch-us startTime epoch="1970-01-01T00:00:00Z"}}. ' +
+        "asleep() takes microseconds since the flight software's system epoch, which depends on its time base.",
+    );
+  }
+  let at: Temporal.Instant;
+  let zero: Temporal.Instant;
   try {
-    return (Temporal.Instant.from(String(instant)).epochNanoseconds / 1000n).toString();
+    at = Temporal.Instant.from(String(instant));
   } catch {
     fail('rust-epoch-us', instant, 'an ISO-8601 instant');
   }
+  try {
+    zero = Temporal.Instant.from(String(epoch));
+  } catch {
+    fail('rust-epoch-us', epoch, 'an ISO-8601 instant (the epoch)');
+  }
+  const micros = (at.epochNanoseconds - zero.epochNanoseconds) / 1000n;
+  if (micros < 0n) fail('rust-epoch-us', instant, `at or after the epoch ${epoch}`);
+  return micros.toString();
 }
 
 /** Microseconds in a duration (e.g. an activity's `startOffset`), for `rsleep(..)`. */
 export function rustDurationMicros(duration: unknown): string {
+  let micros: number;
   try {
-    const d = Temporal.Duration.from(String(duration));
-    return BigInt(Math.round(d.total({ unit: 'microseconds' }))).toString();
+    micros = Temporal.Duration.from(String(duration)).total({ unit: 'microseconds' });
   } catch {
-    fail('rust-duration-us', duration, 'an ISO-8601 duration');
+    fail('rust-duration-us', duration, 'an ISO-8601 duration of days or less (months/years vary in length)');
   }
+  if (micros < 0) fail('rust-duration-us', duration, 'a non-negative duration');
+  if (!Number.isSafeInteger(Math.round(micros)) || Math.abs(micros - Math.round(micros)) > 1e-6) {
+    fail('rust-duration-us', duration, 'a whole number of microseconds');
+  }
+  return String(Math.round(micros));
 }

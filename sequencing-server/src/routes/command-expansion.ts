@@ -251,6 +251,7 @@ commandExpansionRouter.post('/expand-all-sequence-templates', async (req, res, n
 
   //  5. Correlate each activity type in use with the compiled template for the given model.
   const activityTypeNameToTemplate: { [name: string]: Mustache } = {}
+  const activityTypeNameToTemplateId: { [name: string]: number } = {}
   for (const sequenceTemplate of sequenceTemplates) {
     let activityTypeName = sequenceTemplate.activity_type;
 
@@ -258,6 +259,7 @@ commandExpansionRouter.post('/expand-all-sequence-templates', async (req, res, n
     if (allActivityTypes.includes(activityTypeName)) {
       let definition = sequenceTemplate.template_definition;
       activityTypeNameToTemplate[activityTypeName] = new Mustache(definition);
+      activityTypeNameToTemplateId[activityTypeName] = sequenceTemplate.id;
     }
   }
 
@@ -282,7 +284,17 @@ commandExpansionRouter.post('/expand-all-sequence-templates', async (req, res, n
         // NOTE: if I have some gibberish as a variable that's obviously not defined, there will be no error.
         //    i.e. "CMD {{ dsvsdfs }}" expands to "CMD ".
         currentTemplate.setLanguage(languages[0])
-        const commandString = currentTemplate.execute(stringifyActivity(simulatedActivity))
+        let commandString: string
+        try {
+          commandString = currentTemplate.execute(stringifyActivity(simulatedActivity))
+        } catch (e) {
+          // Say which template and activity, so the planner can find what to fix.
+          throw new Error(
+            `Sequence template ${activityTypeNameToTemplateId[activityTypeName]} (${activityTypeName}) failed for ` +
+              `simulated activity ${simulatedActivityId} (simulation dataset ${simulationDatasetId}): ${(e as Error).message}`,
+            { cause: e },
+          )
+        }
 
         // add to results
         expandedActivities[simulatedActivityId] = {

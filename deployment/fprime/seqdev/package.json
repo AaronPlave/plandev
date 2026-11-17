@@ -1,0 +1,17 @@
+{
+  "name": "plandev-fprime-seqdev",
+  "private": true,
+  "description": "F Prime SeqDev adaptation and compile Action bundles (see ../README.md)",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c rollup.config.mjs"
+  },
+  "dependencies": {
+    "@nasa-jpl/plandev-sequence-languages": "github:AaronPlave/plandev-sequence-languages#feat/fprime-languages"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "28.0.6",
+    "@rollup/plugin-node-resolve": "16.0.2",
+    "rollup": "4.52.4"
+  }
+}

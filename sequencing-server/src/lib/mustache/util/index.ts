@@ -1,7 +1,7 @@
 /* A wrapper for Handlebars, so that `sequencing-server` isn't polluted with helper registration and the like. */
 import Handlebars from "handlebars";
 import { addTime, subtractTime, formatTime } from "./time.js";
-import { rustBool, rustDurationMicros, rustEpochMicros, rustFloat, rustIdent, rustInteger, rustString } from "./rust.js";
+import { rustArray, rustBool, rustDurationMicros, rustEpochMicros, rustFloat, rustIdent, rustInteger, rustString } from "./rust.js";
 import { getEnv } from "../../../env.js";
 import { SequencingLanguage } from "../enums/language.js";
 
@@ -26,13 +26,19 @@ Handlebars.registerHelper("subtract-time", (t, d) => subtractTime(t, d, environm
 Handlebars.registerHelper("flatten", flatten)
 Handlebars.registerHelper("format-as-date", t => formatTime(t, environment.language))
 // F Prime Rust literals (see rust.ts). SafeString: the value is already a validated literal.
-Handlebars.registerHelper("rust-string", v => new Handlebars.SafeString(rustString(v)))
-Handlebars.registerHelper("rust-int", v => new Handlebars.SafeString(rustInteger(v)))
-Handlebars.registerHelper("rust-float", v => new Handlebars.SafeString(rustFloat(v)))
-Handlebars.registerHelper("rust-bool", v => new Handlebars.SafeString(rustBool(v)))
-Handlebars.registerHelper("rust-ident", v => new Handlebars.SafeString(rustIdent(v)))
-Handlebars.registerHelper("rust-epoch-us", t => new Handlebars.SafeString(rustEpochMicros(t)))
-Handlebars.registerHelper("rust-duration-us", d => new Handlebars.SafeString(rustDurationMicros(d)))
+// Positional arguments after the value (`{{rust-int v "u8"}}`); Handlebars passes `options` last.
+const rustHelper = (render: (...args: any[]) => string) => (...args: any[]) => {
+  const options = args.pop()
+  return new Handlebars.SafeString(render(...args, options))
+}
+Handlebars.registerHelper("rust-string", rustHelper(v => rustString(v)))
+Handlebars.registerHelper("rust-int", rustHelper((v, type) => rustInteger(v, typeof type === "string" ? type : undefined)))
+Handlebars.registerHelper("rust-float", rustHelper((v, type) => rustFloat(v, typeof type === "string" ? type : undefined)))
+Handlebars.registerHelper("rust-bool", rustHelper(v => rustBool(v)))
+Handlebars.registerHelper("rust-ident", rustHelper(v => rustIdent(v)))
+Handlebars.registerHelper("rust-array", rustHelper((v, kind, type) => rustArray(v, kind, typeof type === "string" ? type : undefined)))
+Handlebars.registerHelper("rust-epoch-us", rustHelper((t, options) => rustEpochMicros(t, options.hash.epoch)))
+Handlebars.registerHelper("rust-duration-us", rustHelper(d => rustDurationMicros(d)))
 
 
 /////////////// EXPOSE TO SEQUENCING-SERVER ///////////////

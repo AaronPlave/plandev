@@ -254,8 +254,13 @@ function argToFSWArg(
     case 'string':
       return {
         arg_type: 'var_string',
+        default_value: null,
         description: arg.annotation ?? '',
+        // F Prime string `size` is the maximum length in bytes.
+        max_bit_length: arg.type.size != null ? arg.type.size * 8 : null,
         name: arg.name,
+        prefix_bit_length: null,
+        valid_regex: null,
       } as ampcs.FswCommandArgumentVarString;
     case 'qualifiedIdentifier': {
       if (!typeDefinitions || !typeDefinitions.length) {

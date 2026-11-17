@@ -325,4 +325,12 @@ await test('Unit Test', async () => {
       }
     }
   });
+
+  await test('String arguments keep their maximum size', async () => {
+    const dictionary = fs.readFileSync(path.join(testDir, 'dictionary/MathDeploymentTopologyDictionary.json'), 'utf8');
+    const { commandDictionary } = plugin.parseDictionary(dictionary);
+    const arg = commandDictionary?.fswCommandMap['CdhCore.cmdDisp.CMD_NO_OP_STRING']?.arguments[0];
+    assert.equal(arg?.arg_type, 'var_string');
+    assert.equal((arg as ampcs.FswCommandArgumentVarString).max_bit_length, 40 * 8);
+  });
 });
