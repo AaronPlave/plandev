@@ -21,4 +21,8 @@ values ('.txt', 'Text'),
        ('.rml', 'Sequence'),
        ('.vml', 'Sequence'),
        ('.sasf', 'Sequence'),
-       ('.satf', 'Sequence');
+       ('.satf', 'Sequence'),
+       ('.rs', 'Sequence'),
+       ('.toml', 'Text'),
+       ('.lock', 'Text'),
+       ('.wasm', 'Binary');

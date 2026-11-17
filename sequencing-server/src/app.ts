@@ -15,7 +15,7 @@ import './polyfills.js';
 import getLogger from './utils/logger.js';
 import { commandExpansionRouter } from './routes/command-expansion.js';
 import { getHasuraSession, canUserPerformAction, ENDPOINTS_WHITELIST } from './utils/hasura.js';
-import { PluginManager } from './utils/PluginManager.js';
+import { FPRIME_DICTIONARY_PARSER_PLUGIN, isFprimeDictionary, PluginManager } from './utils/PluginManager.js';
 import { DictionaryType } from './types/types.js';
 import type { ChannelDictionary, CommandDictionary, ParameterDictionary } from '@nasa-jpl/plandev-ampcs';
 import { sequenceTemplateBatchLoader } from './lib/batchLoaders/sequenceTemplateBatchLoader.js';
@@ -135,15 +135,13 @@ app.post('/put-dictionary', async (req, res, next) => {
     channelDictionary?: ChannelDictionary;
     parameterDictionary?: ParameterDictionary;
   };
-  if (
-    pluginManager.hasPlugin(getEnv().DICTIONARY_PARSER_PLUGIN) &&
-    pluginManager.getPlugin(getEnv().DICTIONARY_PARSER_PLUGIN).parseDictionary
-  ) {
-    parsedDictionaries = pluginManager.getPlugin(getEnv().DICTIONARY_PARSER_PLUGIN).parseDictionary(dictionary);
+  const parserPlugin = isFprimeDictionary(dictionary)
+    ? FPRIME_DICTIONARY_PARSER_PLUGIN
+    : getEnv().DICTIONARY_PARSER_PLUGIN;
+  if (pluginManager.hasPlugin(parserPlugin) && pluginManager.getPlugin(parserPlugin).parseDictionary) {
+    parsedDictionaries = pluginManager.getPlugin(parserPlugin).parseDictionary(dictionary);
   } else {
-    throw new Error(
-      `POST /dictionary: Plugin - ${getEnv().DICTIONARY_PARSER_PLUGIN} \ndoesn't have a 'parseDictionary' method`,
-    );
+    throw new Error(`POST /dictionary: Plugin - ${parserPlugin} \ndoesn't have a 'parseDictionary' method`);
   }
 
   let json = {};

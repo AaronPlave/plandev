@@ -16,8 +16,8 @@ await test('Unit Test', async () => {
     const parsedDictionary = plugin.parseDictionary(dictionary);
     assert.equal(typeof parsedDictionary, 'object');
     assert.notEqual(parsedDictionary.commandDictionary, undefined);
-    assert.equal(parsedDictionary.parameterDictionary, undefined);
-    assert.equal(parsedDictionary.channelDictionary, undefined);
+    assert.notEqual(parsedDictionary.parameterDictionary, undefined);
+    assert.notEqual(parsedDictionary.channelDictionary, undefined);
   });
 
   await test('Parse dictionary for specific stem', async () => {
@@ -25,8 +25,8 @@ await test('Unit Test', async () => {
     const parsedDictionary = plugin.parseDictionary(dictionary);
     assert.equal(typeof parsedDictionary, 'object');
     assert.notEqual(parsedDictionary.commandDictionary, undefined);
-    assert.equal(parsedDictionary.parameterDictionary, undefined);
-    assert.equal(parsedDictionary.channelDictionary, undefined);
+    assert.notEqual(parsedDictionary.parameterDictionary, undefined);
+    assert.notEqual(parsedDictionary.channelDictionary, undefined);
     assert.notEqual(
       parsedDictionary.commandDictionary?.fswCommands.find(cmd => cmd.stem === 'CdhCore.cmdDisp.CMD_TEST_CMD_1'),
       undefined,
@@ -309,5 +309,20 @@ await test('Unit Test', async () => {
     assert.equal(wrappedId.arg_type, 'unsigned', 'wrappedId should be resolved to unsigned type');
     assert.equal(wrappedId.bit_length, 64, 'wrappedId should be 64-bit (from BaseIdType -> U64)');
     assert.equal(wrappedId.description, 'A wrapped ID using nested alias types');
+  });
+
+  await test('Telemetry, parameters and array/struct argument names', async () => {
+    const dictionary = fs.readFileSync(path.join(testDir, 'dictionary/MathDeploymentTopologyDictionary.json'), 'utf8');
+    const { channelDictionary, parameterDictionary } = plugin.parseDictionary(dictionary);
+    assert.equal(channelDictionary?.telemetryMap['MathProject.mathSender.VAL1']?.type, 'F32');
+    assert.equal(parameterDictionary?.paramMap['MathProject.mathReceiver.FACTOR']?.param_type, 'float_param');
+
+    const ref = fs.readFileSync(path.join(testDir, 'dictionary/RefTopologyDictionary.json'), 'utf8');
+    for (const command of plugin.parseDictionary(ref).commandDictionary?.fswCommands ?? []) {
+      for (const arg of command.arguments) {
+        // Argument names must be the formal parameter names, never a qualified type name.
+        assert.ok(!arg.name.includes('.'), `${command.stem}: ${arg.name}`);
+      }
+    }
   });
 });

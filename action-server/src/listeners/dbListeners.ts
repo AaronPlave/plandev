@@ -121,7 +121,9 @@ export async function runAction(payload: ActionRunInsertedPayload, actionSecrets
   }
 
   const duration = Math.round(performance.now() - start);
-  const status = taskError || run?.errors ? "failed" : "success";
+  // An action reports its own failure with `status: "FAILED"` (ActionResult), e.g. a compile error.
+  const reportedFailure = run?.results?.status === "FAILED";
+  const status = taskError || run?.errors || reportedFailure ? "failed" : "success";
   logger.info(`Finished run ${actionRunId} in ${duration / 1000}s - ${status}`);
   const errorValue = JSON.stringify(taskError || run?.errors || {});
   const logStr = run ? run.console.join("\n") : "";

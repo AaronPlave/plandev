@@ -1,11 +1,30 @@
 import path from 'path';
 import { getEnv } from '../env.js';
 
+/** Always loaded alongside the configured parser, so F Prime JSON can be uploaded to any deployment. */
+export const FPRIME_DICTIONARY_PARSER_PLUGIN = '/fprime-dictionary-parser/fprime-parser.js';
+
+/** F Prime JSON dictionaries carry `metadata.dictionarySpecVersion`; AMPCS dictionaries are XML. */
+export function isFprimeDictionary(dictionary: string): boolean {
+  if (!dictionary.trimStart().startsWith('{')) return false;
+  try {
+    return JSON.parse(dictionary)?.metadata?.dictionarySpecVersion !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export class PluginManager {
   private DIRECTORY = "/app/plugins/";
   private plugins: Map<string, any> = new Map();
   async loadPlugins() {
-      const filePath = path.join(this.DIRECTORY, getEnv().DICTIONARY_PARSER_PLUGIN);
+    for (const name of new Set([getEnv().DICTIONARY_PARSER_PLUGIN, FPRIME_DICTIONARY_PARSER_PLUGIN])) {
+      await this.loadPlugin(name);
+    }
+  }
+
+  private async loadPlugin(name: string) {
+      const filePath = path.join(this.DIRECTORY, name);
       try {
         const pluginModule = await import(filePath);
         const plugin = pluginModule.default;
@@ -17,7 +36,7 @@ export class PluginManager {
           }
         }else{
           console.log(`Loaded plugin: ${plugin.name} from ${filePath}`);
-          this.plugins.set(getEnv().DICTIONARY_PARSER_PLUGIN, plugin);
+          this.plugins.set(name, plugin);
         }
       } catch (error) {
         console.error(`Error loading plugin: ${filePath}`, error);

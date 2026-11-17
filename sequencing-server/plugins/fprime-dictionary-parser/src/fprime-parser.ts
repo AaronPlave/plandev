@@ -18,21 +18,44 @@ export default {
     const enums = getEnums(dictionary);
     const enumMap = createEnumMap(enums);
 
+    const header = {
+      mission_name: dictionary.metadata?.deploymentName ?? '',
+      schema_version: dictionary.metadata?.dictionarySpecVersion ?? '',
+      spacecraft_ids: [],
+      version: dictionary.metadata?.projectVersion ?? '',
+    };
+    const telemetries = getTelemetries(dictionary);
+    const params = getParameters(dictionary, enumMap);
+
     return {
+      channelDictionary: {
+        header,
+        id: '',
+        path: null,
+        telemetries,
+        telemetryGroupMap: {},
+        telemetryGroups: [],
+        telemetryMap: Object.fromEntries(telemetries.map(t => [t.abbreviation, t])),
+      },
       commandDictionary: {
         enumMap,
         enums,
         fswCommandMap,
         fswCommands,
-        header: {
-          mission_name: dictionary.metadata?.deploymentName ?? '',
-          schema_version: dictionary.metadata?.dictionarySpecVersion ?? '',
-          spacecraft_ids: [],
-          version: dictionary.metadata?.projectVersion ?? '',
-        },
+        header,
         hwCommandMap: {},
         hwCommands: [],
         id: '',
+        path: null,
+      },
+      parameterDictionary: {
+        enumMap,
+        enums,
+        header,
+        id: '',
+        paramByTypeMap: {} as ampcs.ParameterDictionary['paramByTypeMap'],
+        paramMap: Object.fromEntries(params.map(p => [p.param_name, p])),
+        params,
         path: null,
       },
     };
@@ -57,6 +80,68 @@ function getEnums(dictionary: FPPDictionary): ampcs.Enum[] {
           } as ampcs.Enum),
       ) ?? []
   );
+}
+
+/** F Prime channels, keyed by their fully qualified name (e.g. `CdhCore.cmdDisp.CommandsDispatched`). */
+function getTelemetries(dictionary: FPPDictionary): ampcs.Telemetry[] {
+  return (
+    dictionary.telemetryChannels?.map(channel => ({
+      abbreviation: channel.name,
+      byte_length: (channel.type.size ?? 0) / 8,
+      channel_derivation: 'None',
+      description: channel.annotation ?? '',
+      measurement_id: channel.id,
+      name: channel.name,
+      type: channel.type.name,
+    })) ?? []
+  );
+}
+
+/**
+ * F Prime parameters with a scalar type, keyed by fully qualified name. Struct and array
+ * parameters have no AMPCS equivalent and are skipped.
+ */
+function getParameters(dictionary: FPPDictionary, enumMap: ampcs.EnumMap): ampcs.Parameter[] {
+  const params: ampcs.Parameter[] = [];
+  for (const parameter of dictionary.parameters ?? []) {
+    const type = resolveAlias(parameter.type, dictionary.typeDefinitions);
+    const base = {
+      bit_length: type.size ?? null,
+      description: parameter.annotation ?? '',
+      param_id: parameter.id,
+      param_name: parameter.name,
+      parameter_group: parameter.name.split('.').slice(0, -1).join('.'),
+      parameter_version: null,
+      rationale: '',
+    };
+    const number = { default_value: (parameter.default as number) ?? null, range: null, units: '' };
+    if (type.kind === 'float') {
+      params.push({ ...base, ...number, param_type: 'float_param' });
+    } else if (type.kind === 'integer') {
+      params.push({ ...base, ...number, param_type: type.signed ? 'integer_param' : 'unsigned_int_param' });
+    } else if (type.kind === 'string') {
+      const { bit_length: _bitLength, ...rest } = base;
+      params.push({ ...rest, default_value: (parameter.default as string) ?? null, max_bit_length: (type.size ?? 0) * 8, param_type: 'string_param' });
+    } else if (type.kind === 'qualifiedIdentifier' && enumMap[type.name]) {
+      params.push({
+        ...base,
+        default_value: String(parameter.default ?? '').split('.').pop() ?? null,
+        enum_type: enumMap[type.name],
+        param_type: 'enum_param',
+        range: null,
+        units: '',
+      });
+    }
+  }
+  return params;
+}
+
+function resolveAlias(
+  type: FormalParameter['type'],
+  typeDefinitions: FPPDictionary['typeDefinitions'],
+): FormalParameter['type'] {
+  const definition = typeDefinitions?.find(t => t.qualifiedName === type.name);
+  return definition?.kind === 'alias' ? resolveAlias(definition.underlyingType, typeDefinitions) : type;
 }
 
 function createEnumMap(enums: ampcs.Enum[]): ampcs.EnumMap {
@@ -207,9 +292,10 @@ function argToFSWArg(
         case 'array':
           return {
             arg_type: 'repeat',
-            description: typeDefinition.annotation ?? '',
-            name: typeDefinition.qualifiedName,
-            prefix_bit_length: typeDefinition.elementType.size ?? null,
+            description: arg.annotation ?? typeDefinition.annotation ?? '',
+            name: arg.name,
+            // F Prime arrays are fixed-size and serialized without a length prefix.
+            prefix_bit_length: null,
             repeat: {
               argumentMap: {},
               arguments: [
@@ -223,15 +309,15 @@ function argToFSWArg(
                   typeDefinitions,
                 ),
               ],
-              min: 0,
+              min: typeDefinition.size,
               max: typeDefinition.size,
             },
           } as ampcs.FswCommandArgumentRepeat;
         case 'struct':
           return {
             arg_type: 'repeat',
-            description: typeDefinition.annotation ?? '',
-            name: typeDefinition.qualifiedName,
+            description: arg.annotation ?? typeDefinition.annotation ?? '',
+            name: arg.name,
             prefix_bit_length: null,
             repeat: {
               argumentMap: {},
@@ -250,8 +336,8 @@ function argToFSWArg(
                   typeDefinitions,
                 );
               }),
-              min: 0,
-              max: typeDefinition['size'],
+              min: 1,
+              max: 1,
             },
           } as ampcs.FswCommandArgumentRepeat;
         default:

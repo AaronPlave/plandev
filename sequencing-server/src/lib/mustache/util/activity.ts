@@ -1,5 +1,10 @@
 import type { SimulatedActivity } from "../../batchLoaders/simulatedActivityBatchLoader";
 
+// Structured values as JSON: `String()` would turn them into "[object Object]".
+function stringifyValue(value: unknown): string {
+    return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)
+}
+
 // converts SimulatedActivity into something mustache plays well with
 export function stringifyActivity(simulatedActivity: SimulatedActivity): MustacheActivity {
     // https://stackoverflow.com/questions/62905565/typescript-iterate-over-a-record-type-and-return-updated-record
@@ -7,7 +12,7 @@ export function stringifyActivity(simulatedActivity: SimulatedActivity): Mustach
         const argumentName = curr[0]
         const argumentValue = curr[1]
 
-        acc[argumentName] = String(argumentValue)
+        acc[argumentName] = stringifyValue(argumentValue)
         return acc
     }, {});
 
@@ -15,7 +20,7 @@ export function stringifyActivity(simulatedActivity: SimulatedActivity): Mustach
         const argumentName = curr[0]
         const argumentValue = curr[1]
 
-        acc[argumentName] = String(argumentValue)
+        acc[argumentName] = stringifyValue(argumentValue)
         return acc
     }, {}) : undefined;
 
