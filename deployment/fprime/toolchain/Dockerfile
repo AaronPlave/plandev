@@ -45,6 +45,10 @@ RUN mkdir -p /.cargo \
  && cp -r "/opt/fprime/vendor/fprime_macros-${FPRIME_WASM_VERSION}" /opt/fprime/fprime_macros \
  && rm /opt/fprime/fprime_macros/.cargo-checksum.json \
  && patch -d /opt/fprime/fprime_macros -p1 < "/opt/fprime/patches/fprime_macros-${FPRIME_WASM_VERSION}-command-hygiene.patch" \
+ # `#[fprime_main]` built for the host (every `cargo test` builds every bin) is an empty program, so Cargo's
+ # own discovery of src/bin/*.rs is enough: no per-sequence `[[bin]] required-features` entries to keep in
+ # step when sequences are created, renamed or deleted. The .wasm output is unchanged (byte-identical).
+ && patch -d /opt/fprime/fprime_macros -p1 < "/opt/fprime/patches/fprime_macros-${FPRIME_WASM_VERSION}-host-stub.patch" \
  && printf '\n[patch.crates-io]\nfprime_macros = { path = "/opt/fprime/fprime_macros" }\n\n[net]\noffline = true\n' >> /.cargo/config.toml \
  && rm -rf /usr/local/cargo/registry /opt/fprime/vendor-manifest/target \
  && chmod -R a+rX /opt/fprime /.cargo
@@ -60,7 +64,7 @@ RUN mkdir -p /opt/fprime/profiles && cd /opt/fprime/profiles \
       && echo "${p#*:}  profile_${p%%:*}.toml" | sha256sum -c - ; done \
  && chmod -R a+rX /opt/fprime/profiles
 
-ENV FPRIME_TOOLCHAIN_PATCHES="fprime_macros-${FPRIME_WASM_VERSION}-command-hygiene.patch"
+ENV FPRIME_TOOLCHAIN_PATCHES="fprime_macros-${FPRIME_WASM_VERSION}-command-hygiene.patch,fprime_macros-${FPRIME_WASM_VERSION}-host-stub.patch"
 COPY server.py /opt/fprime/server.py
 EXPOSE 9257 9258
 CMD ["python3", "-u", "/opt/fprime/server.py"]

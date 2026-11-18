@@ -12,7 +12,7 @@ service process: Rust builds execute project code (build scripts, proc macros).
   POST http://:9258/scaffold                    `fprime-wasm init`/`add` for the "F Prime new
       sequence" Action: new project or new sequence in a project, with a restriction profile, and
       a test only when asked for one.
-  POST http://:9258/test                        `fprime-wasm test` for the "F Prime test" Action.
+  POST http://:9258/test                        `fprime-wasm test` (all of a project's tests) for "F Prime test".
   GET  http://:9258/status                      toolchain versions, sessions, memory.
 
 Isolation: every PlanDev user gets their own Unix uid inside the container. Their sessions,
@@ -761,12 +761,24 @@ def build_rust(work, target, uid, home, connection):
 
 
 NAME = re.compile(r'^[a-z][a-z0-9_]{0,63}$')
+# The `[[bin]]` entry `fprime-wasm init`/`add` declares for each sequence. With the host-stub patch Cargo's own
+# discovery of src/bin/*.rs is enough, so the scaffold leaves these out (see the Dockerfile).
+GENERATED_BIN = re.compile(r'\[\[bin\]\]\nname = "(?P<name>[a-z][a-z0-9_]*)"\nrequired-features = \["wasm"\]\n'
+                           r'test = false\nbench = false\n\n?')
+
+
+def without_generated_bin(manifest, name):
+    return GENERATED_BIN.sub(lambda m: '' if m['name'] == name else m[0], manifest)
+
+
 SCAFFOLD_SKIP = ('.gitignore', '.vscode/')  # the workspace service reserves .gitignore; editor settings
 
 
 def scaffold(work, body, uid, home, connection):
     """Upstream scaffolding (`fprime-wasm init` / `add`), then the requested restriction profile.
     Returns the files to write into the workspace project: new or changed ones only.
+
+    The sequence is not declared in Cargo.toml: Cargo discovers src/bin/<sequence>.rs itself.
 
     Upstream writes a test stub (`tests/<sequence>.rs`) with every sequence. Stubs nobody asked for
     pile up, so it is only kept with `test: true`; for an existing sequence that adds just its test
@@ -811,6 +823,10 @@ def scaffold(work, body, uid, home, connection):
                 after[rel] = read_file(project, rel)
     if not want_test:
         after.pop(test_rel, None)
+    if 'Cargo.toml' in before:
+        after['Cargo.toml'] = before['Cargo.toml']  # `add` changes it only to declare the sequence
+    elif 'Cargo.toml' in after:
+        after['Cargo.toml'] = without_generated_bin(after['Cargo.toml'].decode(), sequence).encode()
     if not before:
         for name in os.listdir('/opt/fprime/profiles'):
             after[name] = open(f'/opt/fprime/profiles/{name}', 'rb').read()
@@ -863,14 +879,12 @@ def parse_tests(output):
 
 
 def run_tests(work, body, uid, home, connection):
-    """`fprime-wasm test`, optionally one test target (`tests/<target>.rs`) and one name filter.
-    Upstream's own name filter matches test function names only, and accepts a single filter."""
-    target, name_filter = body.get('target'), body.get('filter') or ''
-    if target is not None and not NAME.match(target):
-        raise Refused(400, 'test targets are lowercase Rust identifiers')
+    """`fprime-wasm test` over the whole project, optionally with upstream's name filter (one word,
+    matched against test function names). Every tests/*.rs target runs, whatever it is called."""
+    name_filter = body.get('filter') or ''
     if re.search(r'\s|^-', name_filter):
         raise Refused(400, 'the test name filter is one word')
-    cmd = ['fprime-wasm', 'test', *([name_filter] if name_filter else []), *(['--', '--test', target] if target else [])]
+    cmd = ['fprime-wasm', 'test', *([name_filter] if name_filter else [])]
     run = run_sandboxed(cmd, uid, home, work, {'CARGO_TARGET_DIR': f'{home}/target'}, connection, merge=True)
     tests = parse_tests(run.stdout)
     return {'ok': run.returncode == 0 and all(t['status'] != 'failed' for t in tests),

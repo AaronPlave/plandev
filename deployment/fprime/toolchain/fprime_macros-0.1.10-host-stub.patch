@@ -1,0 +1,32 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -131,13 +131,29 @@
+     quote! {
+         #error
+ 
++        #[cfg(target_family = "wasm")]
+         #[panic_handler]
+         fn __panic_handler(info: &core::panic::PanicInfo) -> ! {
+             fprime_core::panic_handler(info);
+         }
+ 
++        #[cfg(target_family = "wasm")]
+         #[unsafe(no_mangle)]
+         #entry
++
++        // Host builds of a sequence (`cargo test` builds every bin for the host) are an empty
++        // program, so sequences need no `[[bin]] required-features = ["wasm"]` registration.
++        // The body is still type-checked; it is never linked or run on the host.
++        #[cfg(not(target_family = "wasm"))]
++        extern crate std;
++        #[cfg(not(target_family = "wasm"))]
++        #[allow(dead_code)]
++        #entry
++        #[cfg(not(target_family = "wasm"))]
++        mod __fprime_host_stub {
++            #[unsafe(no_mangle)]
++            extern "C" fn main(_: i32, _: *const *const u8) -> i32 { 0 }
++        }
+     }
+     .into()
+ }

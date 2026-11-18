@@ -210,9 +210,22 @@ class Tests(unittest.TestCase):
         self.assertEqual(tests[0]['output'], '')
 
     def test_refuses_option_injection(self):
-        for body in ({'target': '--x'}, {'target': 'a b'}, {'filter': '--nocapture'}, {'filter': 'a b'}):
+        for body in ({'filter': '--nocapture'}, {'filter': 'a b'}, {'filter': '-q'}):
             with self.assertRaises(server.Refused):
                 server.run_tests('/nonexistent', body, 0, '/nonexistent', None)
+
+
+class Scaffold(unittest.TestCase):
+    def test_leaves_the_new_sequence_undeclared(self):
+        manifest = ('[package]\nname = "s"\n\n[[bin]]\nname = "old"\nrequired-features = ["wasm"]\ntest = false\n'
+                    'bench = false\n\n[[bin]]\nname = "new"\nrequired-features = ["wasm"]\ntest = false\nbench = false\n\n'
+                    '[profile.release]\nlto = true\n')
+        out = server.without_generated_bin(manifest, 'new')
+        self.assertNotIn('name = "new"', out)
+        self.assertIn('name = "old"', out)  # existing declarations are the project's business
+        self.assertIn('[profile.release]', out)
+        custom = '[[bin]]\nname = "new"\npath = "x.rs"\n'
+        self.assertEqual(server.without_generated_bin(custom, 'new'), custom)
 
 
 class ExternalSources(unittest.TestCase):

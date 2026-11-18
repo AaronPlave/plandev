@@ -2388,6 +2388,32 @@ class WorkspaceGitServiceIntegrationTest {
     }
 
     @Test
+    void restoreKeepsTheCurrentManagedByClassification() throws Exception {
+      final var managed = Json.createObjectBuilder().add("managedBy", "tool").add("status", "now").build();
+      // Revision "a" predates the tool adopting the file; "b" is from while it was managed.
+      bindings.saveAndGetEtag(WS1, "a.txt", "v1");
+      bindings.setUserMetadata(WS1, "a.txt", Json.createObjectBuilder().add("status", "old").build());
+      revise("a.txt", "");
+      bindings.saveAndGetEtag(WS1, "a.txt", "v2");
+      bindings.setUserMetadata(WS1, "a.txt", managed);
+      revise("a.txt", "");
+
+      assertSuccess(bindings.handleRestoreRevision(WS1.id(), Path.of("a.txt"), "a", "*", DEFAULT_USER));
+      final var afterA = bindings.getMetadata(WS1, "a.txt").getJsonObject("user");
+      assertEquals("v1", bindings.readFile(WS1, "a.txt"));
+      assertEquals("old", afterA.getString("status"), "other user metadata is restored");
+      assertEquals("tool", afterA.getString("managedBy"), "still managed");
+
+      // The user took the file over: restoring a managed revision does not hand it back to the tool.
+      bindings.setUserMetadata(WS1, "a.txt", Json.createObjectBuilder().add("status", "mine").build());
+      assertSuccess(bindings.handleRestoreRevision(WS1.id(), Path.of("a.txt"), "b", "*", DEFAULT_USER));
+      final var afterB = bindings.getMetadata(WS1, "a.txt").getJsonObject("user");
+      assertEquals("v2", bindings.readFile(WS1, "a.txt"));
+      assertEquals("now", afterB.getString("status"));
+      assertFalse(afterB.containsKey("managedBy"));
+    }
+
+    @Test
     void revisionMetadataDerivesLastEditAsOfTheRevision() throws Exception {
       bindings.saveAndGetEtag(WS1, "a.txt", "v1");
       final var aliceBy = bindings.getMetadata(WS1, "a.txt").getString("lastEditedBy");

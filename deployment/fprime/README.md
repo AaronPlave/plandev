@@ -12,7 +12,8 @@ Built artifacts are read-only workspace files with a revision and provenance met
 (`fprimeBuild`: source and revision, input hashes, dictionary hash, artifact hash, toolchain versions
 and patches). The Action "F Prime new sequence" starts a Rust sequence, and its Cargo project if
 needed, from fprime-wasm's own scaffolding with a chosen restriction profile; "F Prime test" runs a
-project's behaviour tests (`fprime-wasm test`).
+project's behaviour tests (`fprime-wasm test`); "F Prime project check" brings an existing project up
+to the conventions below, previewing every change first.
 
 ## Authoring workflow
 
@@ -23,20 +24,39 @@ project's behaviour tests (`fprime-wasm test`).
   new project `rust/` is set up in the chosen folder) and open the new file. A mission picks the
   profiles it offers by editing these starters; the profile stays in the source's
   `#[fprime_main(..)]`.
+- **Sequences are just files.** Every `src/bin/<name>.rs` is a sequence: Cargo discovers it, nothing
+  is declared in `Cargo.toml` (see the host-stub patch below). Create, rename, move, copy, delete and
+  restore sequences with the ordinary workspace operations; no project file has to follow. A `.rs`
+  moved out of `src/bin/` is no longer a sequence. Share code between sequences through `src/lib.rs`
+  modules (or a `src/bin/<dir>/` module without `main.rs`), not a top-level `src/bin/common.rs`,
+  which Cargo would take for a sequence.
 - **Managed files.** The project infrastructure the toolchain writes is marked
   `user.managedBy: "fprime-wasm"`; SeqDev hides such files unless *Show managed files* (eye icon in
   the file list) is on. Toolchain-controlled ones (`Cargo.toml`, `.cargo/`, `build.rs`,
   `dictionary/`) are also read-only; `src/lib.rs` (where a mission adds helper modules), profiles,
   `sequencer.toml` and `README.md` stay editable. Sequences, tests, helper modules users add and
   built `out/*.wasm` are ordinary, visible files. Remove the `managedBy` key (file metadata panel) to
-  treat a file as ordinary. Projects created before this change are not marked.
+  treat a file as ordinary. Restoring a revision of a file keeps its current `managedBy` (it says who
+  maintains the file now, not part of its history); copies keep it (generic copy semantics), a path
+  deleted and created again is ordinary. Projects created before these conventions: run **F Prime
+  project check** (see below).
+- **F Prime project check** (`project`, `apply`). Compares each infrastructure file with what
+  `fprime-wasm init` produces today for that project (same crate name, dictionary file name,
+  profiles): files generated and unchanged are marked managed (read-only where toolchain-controlled),
+  edited ones stay ordinary; `[[bin]]` entries of the exact form fprime-wasm wrote are removed (a
+  stale one, left by a renamed or deleted sequence, fails every build); the dictionary copy is
+  replaced by the parcel's when they differ. With `apply` off (default) it only reports; with it on
+  it makes exactly the listed changes, keeping other user metadata.
 - **Tests are optional.** Upstream `fprime-wasm add` writes a test stub with every sequence; the
   service drops it unless a test is asked for (*F Prime sequence test*, or the Action's `test`
-  parameter), and never overwrites an existing test. "F Prime test" on `src/bin/<name>.rs` or
-  `tests/<name>.rs` runs `fprime-wasm test -- --test <name>` (that file's tests; upstream's own
-  `[FILTER]` matches test *function* names and accepts only one filter); on any other project file
-  it runs all tests. No test file reports **No tests defined** and runs nothing; a filter matching
-  nothing reports **No tests ran** (failed).
+  parameter), and never overwrites an existing test. "F Prime test" on any file of a project runs
+  that project's tests (`fprime-wasm test`): every `tests/*.rs`, whatever it is called and however
+  many sequences it covers (each `#[fprime_test(sequence = "..")]` names its sequence). Which tests
+  exercise a sequence is only known to the Rust code, so the Action does not guess; the optional
+  `filter` narrows by test function name, as upstream's own filter does. No tests, or none matching
+  the filter, reports **Not run: … 0 tests executed** and runs nothing (status SUCCESS: Actions have
+  no neutral status). Builds and tests prepare the project the same way (`seqdev/project.js`), so
+  tests use the parcel's dictionary like builds do, and both report its hash.
 - **Editor.** "Preparing code help…" shows while rust-analyzer loads (ready = its
   `experimental/serverStatus` reports quiescent, not just a connected socket). Dictionary command
   completion works until then and when the service is down. *Code* menu: Go to definition (F12;
@@ -55,7 +75,7 @@ project's behaviour tests (`fprime-wasm test`).
 |---|---|
 | `toolchain/` | Container image and service: rust-analyzer over WebSockets (port 9257, for browsers) and builds (port 9258, internal) |
 | `docker-compose-fprime.yml` | Compose override adding the service to a deployment or development stack |
-| `seqdev/` | Builds the SeqDev adaptation and the three Action bundles from `@nasa-jpl/plandev-sequence-languages` |
+| `seqdev/` | Builds the SeqDev adaptation and the four Action bundles from `@nasa-jpl/plandev-sequence-languages` (`project.js`: shared by the Actions; `npm test`: project check) |
 | `setup.py` | Installs dictionary, adaptation, Actions, parcel and workspace into a running PlanDev |
 
 The editor languages live in `plandev-sequence-languages` (`fprime-seq`, `fprime-rust`); the dictionary
@@ -188,7 +208,7 @@ container. Deployments that need more should run the image under gVisor or simil
 Pinned in `toolchain/`: Rust 1.100.0 (rust-analyzer from the same toolchain), fprime-wasm 0.1.10 (CLI
 and crates, `vendor-manifest/Cargo.lock`), binaryen `wasm-opt` 133 (checksummed), fprime-gds 4.4.1 and
 its Python dependencies (`requirements.txt`), and restriction profiles from fprime-wasm `v0.1.10`
-(checksummed). All of them, and the patch below, are reported in each build's provenance.
+(checksummed). All of them, and the patches below, are reported in each build's provenance.
 
 `fprime_macros-0.1.10-command-hygiene.patch`: fprime_macros 0.1.10 calls `command(..)` unhygienically
 in generated code. Any dictionary command with an argument named `command` therefore fails to
@@ -197,6 +217,16 @@ compile (`E0618: expected function, found &str`), and every F Prime v4 deploymen
 build to a copy of the vendored release, used through `[patch.crates-io]`. `toolchain/test/smoke.sh`
 reproduces the failure against the unpatched release and fails once upstream fixes it, so the patch
 can be dropped then. It has not been reported upstream yet.
+
+`fprime_macros-0.1.10-host-stub.patch`: `#[fprime_main]` built for the host is an empty program. A
+host `cargo test` (which `fprime-wasm test` runs) builds every binary target for the host, also for
+integration tests only (`CARGO_BIN_EXE_*`); a `#![no_std] #![no_main]` sequence cannot link there
+(`unwinding panics are not supported without std`). Upstream avoids that with a `[[bin]]
+required-features = ["wasm"]` entry per sequence, which every create/rename/delete must keep in step
+(a stale entry fails every build). With this patch Cargo's own `src/bin/*.rs` discovery is enough;
+the `.wasm` output is byte-identical (checked on fprime-wasm's example crate), and the host stub
+costs ~0.1 s per sequence in a test build. The scaffold leaves the entries out. Not reported
+upstream yet; `smoke.sh` builds and tests a project without entries.
 
 To move to another fprime-wasm release: update the versions in `vendor-manifest/Cargo.toml` and the
 Dockerfile ARG, regenerate `vendor-manifest/Cargo.lock` (`cargo generate-lockfile`), update or drop
@@ -208,8 +238,15 @@ the patch, update the profile checksums, rebuild, and run `toolchain/test/run.sh
   out-of-range F32 values. The F Prime compile Action applies the editor's dictionary check first,
   so such sequences fail at the *dictionary* stage. The check also follows seqgen in accepting only
   bare enum constants. Operational argument ranges are not in F Prime dictionaries and are not checked.
-- rust-analyzer reads the dictionary copy inside the Cargo project, while builds use the parcel's
-  dictionary. When they differ, the build report says so.
+- rust-analyzer reads the dictionary copy inside the Cargo project, while builds and tests use the
+  parcel's dictionary. When they differ, build and test reports say so; **F Prime project check**
+  updates the copy.
+- A file's named revisions are reachable only while the file exists: there is no way in SeqDev to
+  bring back a deleted file from its revisions (the restore API needs an existing file). Deleting a
+  sequence does not delete its built `out/<name>.wasm` (or its revisions); their provenance still
+  names the old source path.
+- rust-analyzer can answer *content modified* to Go to definition while it is still processing an
+  edit; the editor then shows "Find definition failed: content modified" (retry works).
 - `fprime-wasm test [FILTERS]...` (0.1.10) passes every filter to `cargo test`, which accepts only
   one, so the Action takes a single name filter. Upstream reports a run with no tests, or no
   matching tests, as success; the Action reports those as such instead.

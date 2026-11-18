@@ -19,7 +19,7 @@ export default [
     plugins: [config, nodeResolve({ browser: true }), commonjs()],
   },
   // Actions: the action server evaluates these as scripts, so `main` must stay a top-level function.
-  ...['fprime-compile', 'fprime-new-sequence', 'fprime-test'].map(name => ({
+  ...['fprime-compile', 'fprime-new-sequence', 'fprime-project-check', 'fprime-test'].map(name => ({
     external: ['crypto'],
     input: `${name}.js`,
     output: { file: `dist/${name}.js`, format: 'cjs' },

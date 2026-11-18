@@ -1051,13 +1051,27 @@ public class WorkspaceFileSystemService implements WorkspaceService {
 
     // Only the user-managed "user" field comes back; readOnly and the system fields stay as they are now.
     final var metadataFile = WorkspacePaths.resolveMetadataPath(workspace, filePath).toFile();
-    final var restored = generateUpdatedMetadataFile(
-        readMetadataFile(metadataFile),
-        new MetadataUpdates.Builder(userId).build(),
-        MetadataMergeBehavior.overwrite);
-    restored.user(historical.get().metadata().get(MetadataKeys.user.name()) instanceof JsonObject user ? user : null);
+    final var current = readMetadataFile(metadataFile);
+    final var restored = generateUpdatedMetadataFile(current, new MetadataUpdates.Builder(userId).build(), MetadataMergeBehavior.overwrite);
+    restored.user(restoredUser(
+        historical.get().metadata().get(MetadataKeys.user.name()) instanceof JsonObject user ? user : null,
+        current.get(MetadataKeys.user.name()) instanceof JsonObject user ? user : null));
     writeMetadataFile(workspace, metadataFile, restored.build());
     return Optional.of(etag);
   }
+
+  /**
+   * The historical "user" field, except {@code managedBy}, which keeps its current value (or absence): it says which tool
+   * maintains the file at this path now, not something about the content being restored. Without this, restoring a
+   * revision from before a tool adopted the file would hand it back to the user, and the reverse.
+   */
+  static JsonObject restoredUser(final JsonObject historical, final JsonObject current) {
+    final var user = Json.createObjectBuilder(historical == null ? JsonValue.EMPTY_JSON_OBJECT : historical).remove(MANAGED_BY);
+    if (current != null && current.containsKey(MANAGED_BY)) user.add(MANAGED_BY, current.get(MANAGED_BY));
+    final var result = user.build();
+    return result.isEmpty() && historical == null ? null : result;
+  }
+
+  private static final String MANAGED_BY = "managedBy";
   //endregion
 }

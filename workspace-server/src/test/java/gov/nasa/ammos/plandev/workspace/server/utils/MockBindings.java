@@ -130,6 +130,12 @@ public class MockBindings extends WorkspaceBindings {
         MetadataMergeBehavior.deepMerge), r -> true);
   }
 
+  /** Replaces the whole "user" field. */
+  public void setUserMetadata(final Workspace ws, final String path, final JsonObject user) throws Exception {
+    history.mutate(ws, "meta", DEFAULT_USER, () -> fs.updateMetadataKeys(
+        ws, Path.of(path), new MetadataUpdates.Builder(DEFAULT_USER).user(user).build(), MetadataMergeBehavior.overwrite), r -> true);
+  }
+
   public JsonObject getMetadata(final Workspace ws, final String path) throws Exception {
     try (final var in = fs.loadMetadataFile(ws, Path.of(path)).readingStream();
          final var reader = Json.createReader(in)) {

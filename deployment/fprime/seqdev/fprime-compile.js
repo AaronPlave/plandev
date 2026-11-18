@@ -5,6 +5,7 @@
 // dictionary is authoritative for both languages: it replaces whatever copy a Cargo project carries.
 // Built by `npm run build` into dist/fprime-compile.js (bundling the shared `.seq` validator).
 import { fprimeSeqParser, validateFprimeSeq } from '@nasa-jpl/plandev-sequence-languages';
+import { b64, callToolchain, readCargoProject, readParcelDictionary, sha256 } from './project.js';
 
 export const parameterDefinitions = {
   source: {
@@ -21,35 +22,6 @@ export const settingDefinitions = {
   // Optional `.seq` header time base (fprime-seqgen --timebase); default: TB_DONT_CARE (0xFFFF).
   seqTimeBase: { type: 'int', required: false },
 };
-
-const b64 = s => Buffer.from(s).toString('base64');
-// `require` at the call: a top-level `crypto` binding would shadow the action context's global `crypto` getter.
-const sha256 = s => require('crypto').createHash('sha256').update(s).digest('hex');
-
-function filesUnder(tree, dir) {
-  let node = tree;
-  for (const name of dir.split('/').filter(Boolean)) node = node.find(c => c.name === name).contents;
-  const out = [];
-  const walk = (children, rel) => {
-    for (const c of children) {
-      if (c.type === 'DIRECTORY') {
-        if (!['target', 'out'].includes(c.name)) walk(c.contents ?? [], `${rel}${c.name}/`);
-      } else out.push(`${rel}${c.name}`);
-    }
-  };
-  walk(node, '');
-  return out;
-}
-
-function cargoProjectOf(tree, path) {
-  const parts = path.split('/').filter(Boolean);
-  for (let depth = parts.length - 1; depth >= 0; depth--) {
-    let node = tree;
-    for (const name of parts.slice(0, depth)) node = node?.find(c => c.name === name && c.type === 'DIRECTORY')?.contents;
-    if (node?.some(c => c.name === 'Cargo.toml')) return parts.slice(0, depth).join('/');
-  }
-  return null;
-}
 
 /** 1-based line/column of an offset. */
 function location(text, offset) {
@@ -95,18 +67,9 @@ export async function main(parameters, settings, actionsAPI) {
   if (isRust && !/(^|\/)src\/bin\/[^/]+\.rs$/.test(source.path)) {
     throw new Error(`${source.path} is not a Rust sequence: sequences are src/bin/<name>.rs in a Cargo project.`);
   }
-  const authorization = actionsAPI.config.SECRETS?.authorization;
-  if (!authorization) throw new Error('No user credentials for this run; the toolchain service requires them.');
-  if (!settings.toolchainUrl) throw new Error('Set the "toolchainUrl" setting of this action (see deployment/fprime/README.md).');
-
   // Parcel dictionary: the same one the editor uses for completion and linting.
-  const parcel = await actionsAPI.readParcel();
-  const dictionaryRow = await actionsAPI.readCommandDictionary(parcel.command_dictionary_id);
-  if (!dictionaryRow.dictionary_file_path) {
-    throw new Error('The parcel dictionary was uploaded without its source file; re-upload it with "persist" enabled.');
-  }
-  const dictionary = await actionsAPI.readDictionaryFile(dictionaryRow.dictionary_file_path);
-  const dictionaryInfo = { mission: dictionaryRow.mission, sha256: sha256(dictionary), version: dictionaryRow.version };
+  const dictionary = await readParcelDictionary(actionsAPI);
+  const { info: dictionaryInfo, row: dictionaryRow } = dictionary;
 
   const sourceText = await actionsAPI.readFile(source);
   const files = {};
@@ -133,49 +96,26 @@ export async function main(parameters, settings, actionsAPI) {
     }
     target = source.path.split('/').pop();
     files[target] = b64(sourceText);
-    files['dictionary.json'] = b64(dictionary);
+    files['dictionary.json'] = b64(dictionary.text);
     artifactDir = source.path.split('/').slice(0, -1).join('/');
   } else {
-    const tree = JSON.parse(await actionsAPI.listFiles(''));
-    const project = cargoProjectOf(tree, source.path);
-    if (project === null) throw new Error(`${source.path} is not inside a Cargo project (no Cargo.toml above it)`);
-    const prefix = project ? `${project}/` : '';
-    for (const rel of filesUnder(tree, project)) {
-      files[rel] = b64(prefix + rel === source.path ? sourceText : await actionsAPI.readFile(prefix + rel));
-    }
-    // build.rs names the dictionary; the parcel's replaces it, so .seq and .rs share one dictionary.
-    const buildRs = files['build.rs'] && Buffer.from(files['build.rs'], 'base64').toString();
-    const dictionaryPath = buildRs && /generate\("([^"]+)"\)/.exec(buildRs)?.[1];
-    if (!dictionaryPath) throw new Error('build.rs does not call fprime_build::generate("<dictionary>")');
-    if (files[dictionaryPath] && Buffer.from(files[dictionaryPath], 'base64').toString() !== dictionary) {
-      notes.push(
-        `\`${prefix}${dictionaryPath}\` differs from the parcel dictionary; built against the parcel's (${dictionaryRow.version}). ` +
-          'The editor (rust-analyzer) uses the project copy: replace it to keep both in step.',
-      );
-    }
-    files[dictionaryPath] = b64(dictionary);
+    // Read from a revision, the source is sent as it was there; everything else as it is now.
+    const project = await readCargoProject(actionsAPI, source.path, dictionary, { [source.path]: sourceText });
+    Object.assign(files, project.files);
+    notes.push(...project.notes);
+    const prefix = project.prefix;
     target = source.path.slice(prefix.length);
     artifactDir = `${prefix}out`;
   }
 
-  const response = await fetch(`${settings.toolchainUrl.replace(/\/$/, '')}/build`, {
-    body: JSON.stringify({
-      files,
-      kind: isRust ? 'rust' : 'seq',
-      target,
-      timebase: settings.seqTimeBase ?? null,
-      workspaceId: actionsAPI.workspaceId,
-    }),
-    // The user's token and active role: the toolchain checks workspace access as SeqDev would.
-    headers: { Authorization: authorization, 'Content-Type': 'application/json', 'x-hasura-role': actionsAPI.config.USER_ROLE || '' },
-    method: 'POST',
-  }).catch(e => {
-    throw new Error(`The F Prime toolchain service is unreachable at ${settings.toolchainUrl} (${e.cause?.code ?? e.message}). Ask an administrator to start it (deployment/fprime/README.md).`);
+  const response = await callToolchain(settings, actionsAPI, 'build', {
+    files,
+    kind: isRust ? 'rust' : 'seq',
+    target,
+    timebase: settings.seqTimeBase ?? null,
   });
-  if (!response.ok) {
-    throw new Error(`Toolchain service: HTTP ${response.status} ${(await response.text()).slice(0, 500)}`);
-  }
-  const build = await response.json();
+  if (!response.ok) throw new Error(`Toolchain service: HTTP ${response.status} ${response.result.error ?? ''}`);
+  const build = response.result;
   // Locations relative to the workspace, like the editor's.
   const projectPrefix = isRust ? source.path.slice(0, source.path.length - target.length) : '';
   build.diagnostics = build.diagnostics.map(d => ({ ...d, file: isRust ? projectPrefix + d.file : source.path }));

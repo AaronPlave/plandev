@@ -3,14 +3,18 @@
 //                                       restriction profile files
 //   Cargo project exists              → `fprime-wasm add <sequence>`
 //   `test` set                        → also (or, for an existing sequence, only) tests/<sequence>.rs
-// The new `src/bin/<sequence>.rs` gets the chosen profile in its `#[fprime_main(..)]` attribute,
-// which stays the authoritative profile (edit it there to change profiles later).
+// Nothing is declared in Cargo.toml: Cargo discovers src/bin/*.rs, so renaming, moving or deleting a
+// sequence needs no project change. The new `src/bin/<sequence>.rs` gets the chosen profile in its
+// `#[fprime_main(..)]` attribute, which stays the authoritative profile (edit it there to change
+// profiles later).
 //
 // Project infrastructure the toolchain writes (Cargo.toml, .cargo/, build.rs, src/lib.rs, the
 // dictionary copy, profiles, sequencer.toml, README.md) is marked `user.managedBy`: SeqDev hides
 // such files unless "Show managed files" is on. Those the tool rewrites or that must match the
 // toolchain are also read-only; lib.rs (helper modules), profiles and sequencer.toml are mission
 // configuration and stay editable. Sequences and tests are ordinary files.
+import { b64, callToolchain, filesUnder, nodeAt, readParcelDictionary } from './project.js';
+
 export const parameterDefinitions = {
   project: {
     defaultValue: 'rust',
@@ -38,37 +42,12 @@ export const settingDefinitions = {
   toolchainUrl: { type: 'string' },
 };
 
-const b64 = s => Buffer.from(s).toString('base64');
 const MANAGED_BY = 'fprime-wasm';
 /** What authors write: sequences and tests. Everything else the scaffold writes is infrastructure. */
 const isAuthored = rel => /^(src\/bin|tests)\/[^/]+\.rs$/.test(rel);
 const isToolControlled = rel => /^(Cargo\.toml|build\.rs|\.cargo\/.+|dictionary\/.+)$/.test(rel);
 
-function nodeAt(tree, dir) {
-  let node = tree;
-  for (const name of dir.split('/').filter(Boolean)) {
-    node = node?.find(c => c.name === name && c.type === 'DIRECTORY')?.contents;
-  }
-  return node ?? null;
-}
-
-function filesUnder(node) {
-  const out = [];
-  const walk = (children, rel) => {
-    for (const c of children) {
-      if (c.type === 'DIRECTORY') {
-        if (!['target', 'out'].includes(c.name)) walk(c.contents ?? [], `${rel}${c.name}/`);
-      } else out.push(`${rel}${c.name}`);
-    }
-  };
-  walk(node, '');
-  return out;
-}
-
 export async function main(parameters, settings, actionsAPI) {
-  const authorization = actionsAPI.config.SECRETS?.authorization;
-  if (!authorization) throw new Error('No user credentials for this run; the toolchain service requires them.');
-  if (!settings.toolchainUrl) throw new Error('Set the "toolchainUrl" setting of this action (see deployment/fprime/README.md).');
   const project = parameters.project.replace(/^\/+|\/+$/g, '');
   const sequence = parameters.sequence.trim();
 
@@ -77,30 +56,18 @@ export async function main(parameters, settings, actionsAPI) {
   const exists = projectNode?.some(c => c.name === 'Cargo.toml');
   const files = {};
   const wantTest = parameters.test === true;
-  const request = { files, profile: parameters.profile ?? '', sequence, test: wantTest, workspaceId: actionsAPI.workspaceId };
+  const request = { files, profile: parameters.profile ?? '', sequence, test: wantTest };
   if (exists) {
     for (const rel of filesUnder(projectNode)) files[rel] = b64(await actionsAPI.readFile(`${project}/${rel}`));
   } else {
-    const parcel = await actionsAPI.readParcel();
-    const dictionaryRow = await actionsAPI.readCommandDictionary(parcel.command_dictionary_id);
-    if (!dictionaryRow.dictionary_file_path) {
-      throw new Error('The parcel dictionary was uploaded without its source file; re-upload it with "persist" enabled.');
-    }
-    request.dictionary = b64(await actionsAPI.readDictionaryFile(dictionaryRow.dictionary_file_path));
+    const { row: dictionaryRow, text } = await readParcelDictionary(actionsAPI);
+    request.dictionary = b64(text);
     request.dictionaryName = `${dictionaryRow.mission || 'dictionary'}.json`.replace(/[^\w.-]/g, '_');
     request.crate = (project.split('/').pop() || 'sequences').toLowerCase().replace(/[^a-z0-9_-]/g, '_').replace(/^[^a-z]+/, '') || 'sequences';
   }
 
-  const response = await fetch(`${settings.toolchainUrl.replace(/\/$/, '')}/scaffold`, {
-    body: JSON.stringify(request),
-    // The user's token and active role: the toolchain checks workspace access as SeqDev would.
-    headers: { Authorization: authorization, 'Content-Type': 'application/json', 'x-hasura-role': actionsAPI.config.USER_ROLE || '' },
-    method: 'POST',
-  }).catch(e => {
-    throw new Error(`The F Prime toolchain service is unreachable at ${settings.toolchainUrl} (${e.cause?.code ?? e.message}). Ask an administrator to start it (deployment/fprime/README.md).`);
-  });
-  const result = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-  if (!response.ok) {
+  const { ok, result } = await callToolchain(settings, actionsAPI, 'scaffold', request);
+  if (!ok) {
     return { data: result, report: `## Could not create \`${sequence}\`\n\n${result.error}`, status: 'FAILED' };
   }
 
@@ -109,7 +76,8 @@ export async function main(parameters, settings, actionsAPI) {
     const path = project ? `${project}/${rel}` : rel;
     const managed = !isAuthored(rel);
     const readOnly = isToolControlled(rel);
-    // A read-only file the tool rewrites (Cargo.toml gains a [[bin]]) is unlocked for the write.
+    // A read-only file the tool rewrites is unlocked for the write (adding a sequence rewrites none:
+    // Cargo discovers src/bin/<name>.rs without a [[bin]] entry).
     if (readOnly && exists) await actionsAPI.setFileMetadata(path, { readOnly: false }).catch(() => undefined);
     await actionsAPI.writeFile(path, Buffer.from(data, 'base64').toString(), true);
     if (managed) await actionsAPI.setFileMetadata(path, { readOnly, user: { managedBy: MANAGED_BY } });
