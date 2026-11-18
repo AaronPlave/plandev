@@ -31,8 +31,7 @@ $$;
 comment on function merlin.analysis_external_event_id(text, text, text, text) is e''
   'The activity id an analysis gives a plan''s external event (it has no integer id of its own): 2^31 plus a 31-bit '
   'FNV-1a hash of its identity (derivation group, source key, type, key), the same as the UI''s getExternalEventId, so '
-  'it never collides with a directive id and is stable across reads. Characters outside the Basic Multilingual Plane '
-  'hash differently from the UI''s UTF-16 code units (not expected in event identities).';
+  'it never collides with a directive id and is stable across reads. Hashed by Unicode code point, as the UI does.';
 
 create view merlin.analysis_activity as
 (
