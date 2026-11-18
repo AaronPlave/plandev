@@ -411,6 +411,11 @@ public class WorkspaceBindings implements Plugin {
     if(!checkPermissions(context, workspaceId, WorkspaceAction.list_workspace_contents)) {
       return;
     }
+    // Searching reads file contents, not just names.
+    if(context.queryParam("search") != null
+       && !checkPermissions(context, workspaceId, WorkspaceAction.read_file_directory)) {
+      return;
+    }
 
     listContents(context);
   }
@@ -431,6 +436,21 @@ public class WorkspaceBindings implements Plugin {
 
     try {
       final var workspace = workspaceService.getWorkspace(workspaceId);
+      // ?search=<text>: "Find in workspace" over this folder's saved text files instead of a listing.
+      final var search = context.queryParam("search");
+      if (search != null) {
+        if (search.isBlank() || search.length() > 200) {
+          context.status(400).json(new FormattedError(AerieService.WORKSPACE_SERVER, "'search' must be 1 to 200 characters."));
+          return;
+        }
+        final var directory = WorkspacePaths.resolveReadingPath(workspace, directoryPath);
+        if (!java.nio.file.Files.isDirectory(directory)) {
+          context.status(404).json(new FormattedError(AerieService.WORKSPACE_SERVER, "No such directory."));
+          return;
+        }
+        context.status(200).json(WorkspaceSearch.search(workspace.rootPath().normalize(), directory, search).toString());
+        return;
+      }
       final var fileTree = workspaceService.listFiles(workspace, directoryPath, depth, withMetadata);
       if (fileTree == null) {
         context.status(404).json(new FormattedError(AerieService.WORKSPACE_SERVER, "No such directory."));

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "rollup -c rollup.config.mjs",
-    "test": "node --test project-check.test.mjs"
+    "test": "node --test project-check.test.mjs project.test.mjs"
   },
   "dependencies": {
     "@nasa-jpl/plandev-sequence-languages": "github:AaronPlave/plandev-sequence-languages#feat/fprime-languages"

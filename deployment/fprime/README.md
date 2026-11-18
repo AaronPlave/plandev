@@ -55,12 +55,27 @@ to the conventions below, previewing every change first.
   exercise a sequence is only known to the Rust code, so the Action does not guess; the optional
   `filter` narrows by test function name, as upstream's own filter does. No tests, or none matching
   the filter, reports **Not run: … 0 tests executed** and runs nothing (status SUCCESS: Actions have
-  no neutral status). Builds and tests prepare the project the same way (`seqdev/project.js`), so
-  tests use the parcel's dictionary like builds do, and both report its hash.
+  no neutral status). Builds and tests prepare the project the same way (`seqdev/project.js`).
+- **One project dictionary.** A Cargo project's dictionary copy (the file `build.rs` names) is what
+  rust-analyzer, builds, tests and an external IDE all read. Builds and tests compare it with the
+  parcel's dictionary first and refuse to run when they differ, naming **F Prime project check**,
+  which previews the replacement and writes it only with `apply` on. Nothing rewrites it as a side
+  effect; once saved, the editor's language server picks it up like any other saved file. `.seq`
+  builds use the parcel dictionary directly. A build of a project that still has old generated
+  `[[bin]]` entries succeeds and says project check can remove them.
+- **Existing modules.** **F Prime verify** checks a `.wasm` (a build output, an imported module, or
+  any revision of one) with `fprime-wasm verify`, without building or changing it, against the
+  `limits` file given, else the `sequencer.toml` of the Cargo project it sits in, else fprime-wasm's
+  stock limits; the report names which, lists each budget, and compares the bytes with the file's
+  `fprimeBuild` metadata (editable metadata: a consistency check, not proof of origin). It loads and
+  sizes the module; it does not run it. **F Prime view WAT** shows a module as WebAssembly text
+  (binaryen `wasm-dis`, which reads the custom page sizes fprime-wasm uses) in the run report,
+  read-only, cut off at `FPRIME_MAX_WAT_BYTES` (512 KiB); nothing is written to the workspace.
 - **Editor.** "Preparing code help…" shows while rust-analyzer loads (ready = its
   `experimental/serverStatus` reports quiescent, not just a connected socket). Dictionary command
-  completion works until then and when the service is down. *Code* menu: Go to definition (F12;
-  Fn+F12 on most Mac keyboards), Find references, Rename. Definitions in other workspace files open
+  completion works until then and when the service is down. Right-click in the editor: Go to
+  definition (F12; Fn+F12 on most Mac keyboards), Find references, Rename, at the clicked symbol, plus
+  Cut/Copy/Paste/Select All. Definitions in other workspace files open
   in the editor (*Back* returns); definitions in the API generated from the dictionary or in library
   crates open read-only in a panel below the editor (the service serves only those sources, see
   `read_source`). *Format document* (Shift+Alt+F) uses rustfmt through rust-analyzer.
@@ -75,7 +90,7 @@ to the conventions below, previewing every change first.
 |---|---|
 | `toolchain/` | Container image and service: rust-analyzer over WebSockets (port 9257, for browsers) and builds (port 9258, internal) |
 | `docker-compose-fprime.yml` | Compose override adding the service to a deployment or development stack |
-| `seqdev/` | Builds the SeqDev adaptation and the four Action bundles from `@nasa-jpl/plandev-sequence-languages` (`project.js`: shared by the Actions; `npm test`: project check) |
+| `seqdev/` | Builds the SeqDev adaptation and the Action bundles from `@nasa-jpl/plandev-sequence-languages` (`project.js`: shared by the Actions; `npm test`: project check, project reading) |
 | `setup.py` | Installs dictionary, adaptation, Actions, parcel and workspace into a running PlanDev |
 
 The editor languages live in `plandev-sequence-languages` (`fprime-seq`, `fprime-rust`); the dictionary
@@ -238,9 +253,6 @@ the patch, update the profile checksums, rebuild, and run `toolchain/test/run.sh
   out-of-range F32 values. The F Prime compile Action applies the editor's dictionary check first,
   so such sequences fail at the *dictionary* stage. The check also follows seqgen in accepting only
   bare enum constants. Operational argument ranges are not in F Prime dictionaries and are not checked.
-- rust-analyzer reads the dictionary copy inside the Cargo project, while builds and tests use the
-  parcel's dictionary. When they differ, build and test reports say so; **F Prime project check**
-  updates the copy.
 - A file's named revisions are reachable only while the file exists: there is no way in SeqDev to
   bring back a deleted file from its revisions (the restore API needs an existing file). Deleting a
   sequence does not delete its built `out/<name>.wasm` (or its revisions); their provenance still

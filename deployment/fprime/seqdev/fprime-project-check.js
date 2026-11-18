@@ -10,12 +10,13 @@
 //   [[bin]] entries. Sequences no longer need them (Cargo discovers src/bin/*.rs); entries of the
 //     exact form fprime-wasm wrote are removed, so renaming or deleting a sequence cannot leave a
 //     stale one that breaks every build. Hand-written entries (a `path`, other settings) stay.
-//   Dictionary copy. The file build.rs names is what rust-analyzer reads; it is replaced by the
-//     parcel's dictionary when they differ (builds and tests always use the parcel's).
+//   Dictionary copy. The file build.rs names is what rust-analyzer, builds, tests and external IDEs
+//     read; it is replaced by the parcel's dictionary when they differ. Builds and tests refuse to
+//     run until it matches, so this is the one place it is updated.
 //
 // With `apply` off (the default) nothing changes: the report lists what would. Run it again with
 // `apply` on to make exactly those changes. Other user metadata on a file is kept.
-import { b64, callToolchain, dictionaryPathOf, filesUnder, nodeAt, readParcelDictionary, sha256 } from './project.js';
+import { b64, callToolchain, dictionaryPathOf, filesUnder, GENERATED_BIN, nodeAt, readParcelDictionary, sha256 } from './project.js';
 
 export const parameterDefinitions = {
   project: { defaultValue: 'rust', description: 'Workspace folder of the Cargo project', required: true, type: 'string' },
@@ -27,7 +28,6 @@ export const settingDefinitions = {
 
 const MANAGED_BY = 'fprime-wasm';
 const isToolControlled = rel => /^(Cargo\.toml|build\.rs|\.cargo\/.+|dictionary\/.+)$/.test(rel);
-const GENERATED_BIN = /\[\[bin\]\]\nname = "([a-z][a-z0-9_]*)"\nrequired-features = \["wasm"\]\ntest = false\nbench = false\n\n?/g;
 
 export function withoutGeneratedBins(manifest) {
   const names = [...manifest.matchAll(GENERATED_BIN)].map(m => m[1]);

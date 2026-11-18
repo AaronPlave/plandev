@@ -38,7 +38,7 @@ export function cargoProjectOf(tree, path) {
   return null;
 }
 
-/** The parcel's F Prime dictionary: the one the editor uses, authoritative for builds and tests. */
+/** The parcel's F Prime dictionary: authoritative; `.seq` builds use it, Cargo projects must carry a copy equal to it. */
 export async function readParcelDictionary(actionsAPI) {
   const parcel = await actionsAPI.readParcel();
   const row = await actionsAPI.readCommandDictionary(parcel.command_dictionary_id);
@@ -54,11 +54,15 @@ export function dictionaryPathOf(buildRs) {
   return /generate\("([^"]+)"\)/.exec(buildRs ?? '')?.[1] ?? null;
 }
 
+/** The `[[bin]]` entry fprime-wasm used to write per sequence; Cargo now discovers src/bin/*.rs itself. */
+export const GENERATED_BIN = /\[\[bin\]\]\nname = "([a-z][a-z0-9_]*)"\nrequired-features = \["wasm"\]\ntest = false\nbench = false\n\n?/g;
+
 /**
- * The Cargo project holding `path`, read for the toolchain service, with the parcel's dictionary in
- * place of the project's copy (the file build.rs names). Builds and tests both go through here, so
- * they compile against the same dictionary as each other and as the editor's `.seq` support; a
- * stale project copy is reported in `notes` (rust-analyzer reads that copy), never used.
+ * The Cargo project holding `path`, read for the toolchain service exactly as it is in the workspace:
+ * builds and tests compile against the project's own dictionary copy (the file build.rs names), the
+ * same file rust-analyzer and an external IDE read. That copy must equal the parcel's dictionary;
+ * when it doesn't, `dictionaryProblem` says why and the caller refuses to build (nothing is
+ * rewritten here: **F Prime project check** updates the copy, explicitly).
  * `overrides`: {workspace path: text} to send instead of the stored file (e.g. a source revision).
  */
 export async function readCargoProject(actionsAPI, path, dictionary, overrides = {}) {
@@ -69,21 +73,30 @@ export async function readCargoProject(actionsAPI, path, dictionary, overrides =
   const rels = filesUnder(nodeAt(tree, project));
   const files = {};
   for (const rel of rels) files[rel] = b64(overrides[prefix + rel] ?? (await actionsAPI.readFile(prefix + rel)));
-  const dictionaryPath = dictionaryPathOf(files['build.rs'] && Buffer.from(files['build.rs'], 'base64').toString());
+  const text = rel => (files[rel] === undefined ? undefined : Buffer.from(files[rel], 'base64').toString());
+  const dictionaryPath = dictionaryPathOf(text('build.rs'));
   if (!dictionaryPath) throw new Error(`${prefix}build.rs does not call fprime_build::generate("<dictionary>")`);
-  const notes = [];
-  const copy = files[dictionaryPath] && Buffer.from(files[dictionaryPath], 'base64').toString();
+  const copy = text(dictionaryPath);
   const projectDictionary = { path: prefix + dictionaryPath, sha256: copy === undefined ? null : sha256(copy) };
-  if (copy !== dictionary.text) {
+  const check = `run **F Prime project check** (project \`${project || '/'}\`, then again with **apply** on) to update it`;
+  const dictionaryProblem =
+    copy === undefined
+      ? `The project's dictionary \`${projectDictionary.path}\` (named by build.rs) is missing: ${check}.`
+      : copy !== dictionary.text
+        ? `The project's dictionary \`${projectDictionary.path}\` (sha256 \`${projectDictionary.sha256.slice(0, 12)}…\`) ` +
+          `differs from the parcel dictionary ${dictionary.info.mission} ${dictionary.info.version} ` +
+          `(sha256 \`${dictionary.info.sha256.slice(0, 12)}…\`). The editor, builds and tests all use the project's copy, ` +
+          `so nothing was built against a dictionary the editor isn't showing: ${check}.`
+        : null;
+  const notes = [];
+  const bins = [...(text('Cargo.toml') ?? '').matchAll(GENERATED_BIN)].map(m => m[1]);
+  if (bins.length) {
     notes.push(
-      copy === undefined
-        ? `\`${prefix}${dictionaryPath}\` (named by build.rs) is missing; used the parcel dictionary (${dictionary.info.version}).`
-        : `\`${prefix}${dictionaryPath}\` differs from the parcel dictionary; used the parcel's (${dictionary.info.version}). ` +
-            'The editor (rust-analyzer) reads the project copy: run **F Prime project check** to update it.',
+      `\`${prefix}Cargo.toml\` still declares ${bins.length} sequence(s) the old way (\`[[bin]]\` ${bins.join(', ')}); ` +
+        'renaming or deleting one of them breaks every build. **F Prime project check** removes these entries.',
     );
   }
-  files[dictionaryPath] = b64(dictionary.text);
-  return { files, prefix, project, projectDictionary, notes, rels };
+  return { dictionaryProblem, files, notes, prefix, project, projectDictionary, rels };
 }
 
 export async function callToolchain(settings, actionsAPI, endpoint, body) {

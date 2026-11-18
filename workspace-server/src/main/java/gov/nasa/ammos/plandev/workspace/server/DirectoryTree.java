@@ -193,6 +193,8 @@ public class DirectoryTree {
       final var builder = Json.createObjectBuilder()
                               .add("name", name)
                               .add("type", renderType.name());
+      // Byte length from the file system (a stat, the content is not read); 0 for a file that vanished meanwhile.
+      builder.add("size", path.toFile().length());
 
       metadataStatus.ifPresent(status -> {
         builder.add("metadataStatus", status.name());

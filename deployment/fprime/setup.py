@@ -25,6 +25,8 @@ ACTIONS = {
     'F Prime test': ('fprime-test.js', 'Run a Rust/WASM project\'s behaviour tests (fprime-wasm test)'),
     'F Prime project check': ('fprime-project-check.js',
                               'Preview (then apply) managed-file marks, [[bin]] cleanup and dictionary sync for an existing project'),
+    'F Prime verify': ('fprime-verify.js', 'Check an existing .wasm (any revision) against sequencer.toml limits, without rebuilding'),
+    'F Prime view WAT': ('fprime-wat.js', 'Show an existing .wasm (any revision) as WebAssembly text, read-only'),
 }
 
 

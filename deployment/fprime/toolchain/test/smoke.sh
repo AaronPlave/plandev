@@ -37,6 +37,15 @@ fprime-wasm build -- --bin startup >/tmp/build.log 2>&1 || { cat /tmp/build.log;
 fprime-wasm verify --no-build --json | grep -q '"passed": *true' || { fprime-wasm verify --no-build; exit 1; }
 ls -l "$CARGO_TARGET_DIR/wasm32v1-none/release/startup.wasm"
 
+echo "== an existing module, outside its crate (\"F Prime verify\" / \"F Prime view WAT\", server.inspect_module)"
+mkdir -p /tmp/inspect && cp "$CARGO_TARGET_DIR/wasm32v1-none/release/startup.wasm" /tmp/inspect/module.wasm
+(cd /tmp/inspect && fprime-wasm verify --json module.wasm | grep -q '"passed": *true')
+printf '[config]\nheap_pages = 1\nguest_memory = 64\n' > /tmp/inspect/sequencer.toml
+(cd /tmp/inspect && fprime-wasm verify --json --limits sequencer.toml module.wasm >/tmp/inspect/tight.json || true)
+grep -q '"passed": *false' /tmp/inspect/tight.json
+grep -q '"heap_pages": *1' /tmp/inspect/tight.json
+wasm-dis --all-features /tmp/inspect/module.wasm | grep -q '(import "fprime_v1" "cmd"'
+
 echo "== sequences need no [[bin]] entries (host-stub patch): Cargo discovers src/bin/*.rs"
 python3 - <<'PY'
 import re; t = open('Cargo.toml').read()

@@ -2,7 +2,8 @@
 //   .seq → dictionary check → fprime-seqgen → .bin            (next to the source)
 //   .rs  → fprime-wasm build (restriction profile) + verify → .wasm (in <cargo project>/out/)
 // The tools run in the F Prime toolchain service, never in the action server. The parcel's F Prime
-// dictionary is authoritative for both languages: it replaces whatever copy a Cargo project carries.
+// dictionary is authoritative: `.seq` builds use it directly; a Cargo project builds against its own
+// copy (what rust-analyzer reads too) and is refused when that copy differs from the parcel's.
 // Built by `npm run build` into dist/fprime-compile.js (bundling the shared `.seq` validator).
 import { fprimeSeqParser, validateFprimeSeq } from '@nasa-jpl/plandev-sequence-languages';
 import { b64, callToolchain, readCargoProject, readParcelDictionary, sha256 } from './project.js';
@@ -47,7 +48,7 @@ function report({ source, ok, diagnostics, written, verify, notes, dictionaryInf
     '',
     rows.length ? '| Stage | Level | Location | Message |\n|---|---|---|---|\n' + rows.join('\n') : 'No diagnostics.',
     '',
-    'Stages: *dictionary* = checked against the parcel dictionary before compiling; *compile* = compiler error; ' +
+    'Stages: *dictionary* = checked against the parcel dictionary before compiling (`.seq`: the commands; Rust: the project\'s copy); *compile* = compiler error; ' +
       '*profile* = restriction profile violation; *verify* = the module does not load or exceeds `sequencer.toml` limits.',
     '',
     `Dictionary: ${dictionaryInfo.mission} ${dictionaryInfo.version}.` +
@@ -101,6 +102,11 @@ export async function main(parameters, settings, actionsAPI) {
   } else {
     // Read from a revision, the source is sent as it was there; everything else as it is now.
     const project = await readCargoProject(actionsAPI, source.path, dictionary, { [source.path]: sourceText });
+    if (project.dictionaryProblem) {
+      const diagnostics = [{ column: 1, file: project.projectDictionary.path, line: 1, message: project.dictionaryProblem, severity: 'error', stage: 'dictionary' }];
+      const result = { diagnostics, notes: project.notes, ok: false, source, verify: null, written: [] };
+      return { data: { diagnostics, projectDictionary: project.projectDictionary }, report: report({ ...result, dictionaryInfo, toolchain: null }), status: 'FAILED' };
+    }
     Object.assign(files, project.files);
     notes.push(...project.notes);
     const prefix = project.prefix;

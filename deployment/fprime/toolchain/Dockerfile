@@ -23,7 +23,9 @@ RUN arch=$(uname -m) \
  && curl -sSLo /tmp/binaryen.tgz "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-${arch}-linux.tar.gz" \
  && echo "$sha  /tmp/binaryen.tgz" | sha256sum -c - \
  && tar xzf /tmp/binaryen.tgz -C /opt && rm /tmp/binaryen.tgz \
- && ln -s "/opt/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt
+ && ln -s "/opt/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt \
+ # wasm-dis: "F Prime view WAT" (binaryen reads custom page sizes, which fprime-wasm modules use).
+ && ln -s "/opt/binaryen-${BINARYEN_VERSION}/bin/wasm-dis" /usr/local/bin/wasm-dis
 
 # fprime-seqgen and the service's websocket library, at the versions in requirements.txt.
 COPY requirements.txt /opt/fprime/requirements.txt

@@ -13,6 +13,9 @@ service process: Rust builds execute project code (build scripts, proc macros).
       sequence" Action: new project or new sequence in a project, with a restriction profile, and
       a test only when asked for one.
   POST http://:9258/test                        `fprime-wasm test` (all of a project's tests) for "F Prime test".
+  POST http://:9258/inspect                     an existing workspace `.wasm` (working copy or a revision):
+      `fprime-wasm verify` against given or stock limits, or its WebAssembly text (binaryen `wasm-dis`),
+      for "F Prime verify" / "F Prime view WAT". Nothing is built or written.
   GET  http://:9258/status                      toolchain versions, sessions, memory.
 
 Isolation: every PlanDev user gets their own Unix uid inside the container. Their sessions,
@@ -142,6 +145,20 @@ def workspace_get(credentials, workspace_id, path='', query=''):
         if e.code in (403, 404):
             raise Refused(4403, f'no access to workspace {workspace_id}') from e
         raise
+
+
+def workspace_bytes(credentials, workspace_id, path, revision=None):
+    """A file's saved bytes, or those of one of its named revisions (the versioning API)."""
+    if revision is None:
+        return workspace_get(credentials, workspace_id, path)
+    token, role = credentials
+    url = (f'{WORKSPACE_URL}/versioning/{int(workspace_id)}/{urllib.parse.quote(path)}'
+           f'?revision={urllib.parse.quote(str(revision))}')
+    headers = {'Authorization': f'Bearer {token}', **({'x-hasura-role': role} if role else {})}
+    try:
+        return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60).read()
+    except urllib.error.HTTPError as e:
+        raise Refused(4404 if e.code == 404 else 4403, f'cannot read {path} @ {revision} (HTTP {e.code})') from e
 
 
 def workspace_tree(credentials, workspace_id):
@@ -891,6 +908,44 @@ def run_tests(work, body, uid, home, connection):
             'exitCode': run.returncode, 'tests': tests, 'log': run.stdout[-200000:], 'command': ' '.join(cmd[1:])}
 
 
+MAX_WAT_BYTES = env_int('FPRIME_MAX_WAT_BYTES', 512 * 1024)
+
+
+def inspect_module(work, body, credentials, uid, home, connection):
+    """Verify an existing module, or disassemble it, without building or changing anything. Limits:
+    the `sequencer.toml` text the caller sends, else fprime-wasm's stock sequencer (reported as such)."""
+    path = body['path']
+    check_relpath(path)
+    module = workspace_bytes(credentials, body['workspaceId'], path, body.get('revision'))
+    if len(module) > MAX_PROJECT_BYTES:
+        raise Refused(413, f'{path} is larger than {MAX_PROJECT_BYTES} bytes')
+    if module[:4] != b'\0asm':
+        raise Refused(400, f'{path} is not a WebAssembly module')
+    files = {'module.wasm': module}
+    if body.get('limits') is not None:
+        files['sequencer.toml'] = base64.b64decode(body['limits'])
+    materialize(work, files, uid)
+    result = {'path': path, 'revision': body.get('revision'), 'bytes': len(module),
+              'sha256': hashlib.sha256(module).hexdigest(), 'toolchain': TOOLCHAIN}
+    if body.get('mode') == 'wat':
+        run = run_sandboxed(['wasm-dis', '--all-features', 'module.wasm'], uid, home, work, connection=connection, timeout=60)
+        text = run.stdout
+        result.update(ok=run.returncode == 0, error=run.stderr[-2000:] if run.returncode else None,
+                      watBytes=len(text.encode()), watLines=text.count('\n'),
+                      wat=text.encode()[:MAX_WAT_BYTES].decode(errors='ignore'), watTruncated=len(text.encode()) > MAX_WAT_BYTES)
+        return result
+    cmd = ['fprime-wasm', 'verify', '--json', *(['--limits', 'sequencer.toml'] if 'sequencer.toml' in files else []), 'module.wasm']
+    run = run_sandboxed(cmd, uid, home, work, connection=connection, timeout=120)
+    try:
+        verify = json.loads(run.stdout[run.stdout.index('{'):])
+    except ValueError:
+        verify = None
+    result.update(ok=run.returncode == 0 and bool(verify) and all(m['passed'] for m in verify['modules']) and not verify['errors'],
+                  verify=verify, limitsSource='given' if 'sequencer.toml' in files else 'stock',
+                  log=(run.stdout if verify is None else '') + run.stderr[-4000:], command=' '.join(cmd[1:]))
+    return result
+
+
 class Builds(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != '/status':
@@ -905,7 +960,7 @@ class Builds(BaseHTTPRequestHandler):
                                     'builds': MAX_BUILDS, 'idleSeconds': IDLE_SECONDS}})
 
     def do_POST(self):
-        if self.path not in ('/build', '/scaffold', '/test'):
+        if self.path not in ('/build', '/scaffold', '/test', '/inspect'):
             return self._send(404, {'error': 'not found'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -915,6 +970,7 @@ class Builds(BaseHTTPRequestHandler):
             credentials = credentials_from_headers(self.headers)
             workspace_get(credentials, body['workspaceId'])  # valid credentials that may see this workspace
             username = username_of(credentials[0])
+            body.setdefault('files', {})
             if len(body['files']) > MAX_PROJECT_FILES:
                 raise Refused(413, 'too many files')
             for rel in [*body['files'], *([body['target']] if self.path == '/build' else [])]:
@@ -934,6 +990,8 @@ class Builds(BaseHTTPRequestHandler):
                 work = tempfile.mkdtemp(dir=SESSIONS)
                 try:
                     os.chown(work, uid, uid)
+                    if self.path == '/inspect':
+                        return self._send(200, inspect_module(work, body, credentials, uid, home, self.connection))
                     if self.path == '/scaffold':
                         created = scaffold(work, body, uid, home, self.connection)
                         return self._send(200, {'files': {k: base64.b64encode(v).decode() for k, v in created.items()},

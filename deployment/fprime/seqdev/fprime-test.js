@@ -5,8 +5,8 @@
 // called and however many sequences each covers (`#[fprime_test(sequence = "..")]` names the
 // sequence per test function). Which tests exercise a given sequence is only known to the Rust
 // code, so this Action does not guess; `filter` narrows the run by test function name, as
-// upstream's own filter does. The project is prepared as for "F Prime compile", so tests run
-// against the same (parcel) dictionary as builds.
+// upstream's own filter does. The project is prepared as for "F Prime compile": tests run against
+// the project's dictionary copy, the one the editor reads, and are refused when it differs from the parcel's.
 //
 // Tests are optional: with none, or none matching the filter, nothing runs and the report says
 // "Not run". The status stays SUCCESS (Actions have no neutral status), so the report is explicit
@@ -55,6 +55,13 @@ export async function main(parameters, settings, actionsAPI) {
   const dictionary = await readParcelDictionary(actionsAPI);
   const project = await readCargoProject(actionsAPI, path, dictionary);
   const scope = `the project \`${project.project || '/'}\``;
+  if (project.dictionaryProblem) {
+    return {
+      data: { dictionary: dictionary.info, executed: 0, outcome: 'refused', projectDictionary: project.projectDictionary, tests: [] },
+      report: [`## Not run: dictionary mismatch in ${scope}`, '', project.dictionaryProblem, '', ...project.notes.map(n => `> ${n}`)].join('\n'),
+      status: 'FAILED',
+    };
+  }
   const testFiles = project.rels.filter(rel => /^tests\/[^/]+\.rs$/.test(rel) || /^tests\/[^/]+\/main\.rs$/.test(rel));
   if (testFiles.length === 0) return notRun(scope, 'no tests defined', dictionary, project.notes);
 
@@ -95,7 +102,7 @@ export async function main(parameters, settings, actionsAPI) {
         .filter(t => t.status === 'failed')
         .flatMap(t => [`### \`${t.target}::${t.name}\``, '', fence(t.output || '(no output)'), '']),
       ...(harnessFailed || (!run.ok && !failed) ? ['Output:', '', fence((run.log ?? '').split('\n').slice(-60).join('\n')), ''] : []),
-      `\`fprime-wasm ${run.command}\`. Dictionary: ${dictionary.info.mission} ${dictionary.info.version} ` +
+      `\`fprime-wasm ${run.command}\`. Dictionary: \`${project.projectDictionary.path}\` = ${dictionary.info.mission} ${dictionary.info.version} ` +
         `(sha256 \`${dictionary.info.sha256.slice(0, 16)}…\`). Toolchain: ${run.toolchain?.['fprime-wasm'] ?? '?'}, ${run.toolchain?.rustc ?? '?'}.`,
     ].join('\n'),
     status: ok ? 'SUCCESS' : 'FAILED',
