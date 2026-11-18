@@ -10,7 +10,9 @@ service process: Rust builds execute project code (build scripts, proc macros).
   POST http://:9258/build                       build/verify sources sent by the F Prime compile
       Action, authorized with the requesting user's token. Internal port: not for browsers.
   POST http://:9258/scaffold                    `fprime-wasm init`/`add` for the "F Prime new
-      sequence" Action: new project or new sequence in a project, with a restriction profile.
+      sequence" Action: new project or new sequence in a project, with a restriction profile, and
+      a test only when asked for one.
+  POST http://:9258/test                        `fprime-wasm test` for the "F Prime test" Action.
   GET  http://:9258/status                      toolchain versions, sessions, memory.
 
 Isolation: every PlanDev user gets their own Unix uid inside the container. Their sessions,
@@ -66,6 +68,10 @@ MAX_FILE_BYTES = env_int('FPRIME_MAX_FILE_BYTES', 512 * 1024 * 1024)
 CACHE_DAYS = env_int('FPRIME_CACHE_DAYS', 14)
 FIRST_UID = 20000
 SKIP_DIRS = {'target', 'out'}  # build output: never inputs
+# Read-only sources the editor may show when a definition leads outside the project (see read_source).
+READABLE_SOURCE_ROOTS = ('/opt/fprime/vendor', '/opt/fprime/fprime_macros',
+                         os.environ.get('RUSTUP_HOME', '/usr/local/rustup') + '/toolchains')
+MAX_SOURCE_BYTES = 4 * 1024 * 1024
 
 
 class Refused(Exception):
@@ -485,6 +491,21 @@ class LspSession:
                 print(f'lsp {self.id}: resync failed: {e}', flush=True)
         self.resync_task = asyncio.ensure_future(run())
 
+    def read_source(self, request):
+        """`seqdev/readFile`: a source rust-analyzer points at outside the workspace project, for a
+        read-only view in the editor: code generated into this user's own build directory (the
+        dictionary API), the vendored F Prime crates, or the Rust standard library. Nothing else."""
+        path = urllib.parse.unquote(urllib.parse.urlparse(str(request.get('params', {}).get('uri', ''))).path)
+        try:
+            root = next(r for r in (f'{self.home}/ra-target', *READABLE_SOURCE_ROOTS) if path.startswith(r + '/'))
+            data = read_file(root, path[len(root) + 1:])  # no symlinks anywhere below the root
+            if len(data) > MAX_SOURCE_BYTES:
+                raise ValueError('too large to show')
+            return {'jsonrpc': '2.0', 'id': request.get('id'), 'result': {'text': data.decode()}}
+        except (StopIteration, OSError, ValueError, Refused) as e:
+            message = 'not a readable source' if isinstance(e, StopIteration) else str(e)
+            return {'jsonrpc': '2.0', 'id': request.get('id'), 'error': {'code': -32602, 'message': message}}
+
     # rust-analyzer
     def send(self, data):
         body = json.dumps(data).encode()
@@ -573,6 +594,9 @@ class LspSession:
             async for message in self.ws:
                 self.last_message = time.monotonic()
                 SESSIONS_STATE[self.id]['last'] = time.time()
+                if '"seqdev/readFile"' in message:
+                    await self.ws.send(json.dumps(self.read_source(json.loads(message))))
+                    continue
                 self.proc.stdin.write(self.to_server(message))
                 await self.proc.stdin.drain()
 
@@ -637,14 +661,16 @@ class Cancelled(Exception):
     pass
 
 
-def run_sandboxed(cmd, uid, home, cwd, env=None, connection=None, timeout=BUILD_TIMEOUT):
-    """Run cmd as uid; killed (with everything it started) on timeout or when the caller hangs up."""
+def run_sandboxed(cmd, uid, home, cwd, env=None, connection=None, timeout=BUILD_TIMEOUT, merge=False):
+    """Run cmd as uid; killed (with everything it started) on timeout or when the caller hangs up.
+    `merge` interleaves stderr into stdout, in order (cargo's progress and the test output)."""
     kwargs = spawn_kwargs(uid, home, cwd)
     kwargs['env'] = {**kwargs['env'], **(env or {})}
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge else subprocess.PIPE,
+                            text=True, **kwargs)
     out = {}
     readers = [threading.Thread(target=lambda k=k: out.__setitem__(k, getattr(proc, k).read()), daemon=True)
-               for k in ('stdout', 'stderr')]
+               for k in (('stdout',) if merge else ('stdout', 'stderr'))]
     for r in readers:
         r.start()
     deadline = time.monotonic() + timeout
@@ -662,7 +688,8 @@ def run_sandboxed(cmd, uid, home, cwd, env=None, connection=None, timeout=BUILD_
         for r in readers:
             r.join(5)
         proc.stdout.close()
-        proc.stderr.close()
+        if proc.stderr:
+            proc.stderr.close()
     return subprocess.CompletedProcess(cmd, proc.returncode, out.get('stdout', ''), out.get('stderr', ''))
 
 
@@ -739,17 +766,28 @@ SCAFFOLD_SKIP = ('.gitignore', '.vscode/')  # the workspace service reserves .gi
 
 def scaffold(work, body, uid, home, connection):
     """Upstream scaffolding (`fprime-wasm init` / `add`), then the requested restriction profile.
-    Returns the files to write into the workspace project: new or changed ones only."""
-    sequence, profile = body['sequence'], body.get('profile') or ''
+    Returns the files to write into the workspace project: new or changed ones only.
+
+    Upstream writes a test stub (`tests/<sequence>.rs`) with every sequence. Stubs nobody asked for
+    pile up, so it is only kept with `test: true`; for an existing sequence that adds just its test
+    (`add` keeps existing files). Existing files are never overwritten."""
+    sequence, profile, want_test = body['sequence'], body.get('profile') or '', bool(body.get('test'))
     if not NAME.match(sequence) or not re.match(r'^\w*$', profile):
         raise Refused(400, 'sequence names are lowercase Rust identifiers; profiles are profile_<name>.toml names')
+    source_rel, test_rel = f'src/bin/{sequence}.rs', f'tests/{sequence}.rs'
     before = {rel: base64.b64decode(data) for rel, data in body['files'].items()}
+    creating = source_rel not in before
+    if before:
+        if want_test and test_rel in before:
+            raise Refused(409, f'{test_rel} already exists')
+        if not want_test and not creating:
+            raise Refused(409, f'{source_rel} already exists')
+        if want_test and creating:
+            raise Refused(404, f'{source_rel} does not exist: create the sequence before its test')
     project = f'{work}/project'
     os.mkdir(project, 0o700)
     os.chown(project, uid, uid)
     if before:
-        if f'src/bin/{sequence}.rs' in before:
-            raise Refused(409, f'src/bin/{sequence}.rs already exists')
         materialize(project, before, uid)
         cmd, cwd = ['fprime-wasm', 'add', sequence], project
     else:
@@ -771,18 +809,72 @@ def scaffold(work, body, uid, home, connection):
             rel = os.path.relpath(os.path.join(dirpath, name), project)
             if not rel.startswith(SCAFFOLD_SKIP):
                 after[rel] = read_file(project, rel)
+    if not want_test:
+        after.pop(test_rel, None)
     if not before:
         for name in os.listdir('/opt/fprime/profiles'):
             after[name] = open(f'/opt/fprime/profiles/{name}', 'rb').read()
-    if profile and f'profile_{profile}.toml' not in after:
-        raise Refused(400, f'the project has no profile_{profile}.toml')
-    source = after[f'src/bin/{sequence}.rs'].decode()
-    # `todo!()` is a macro, which restriction profiles reject: start from a body that builds.
-    source = source.replace('    todo!()\n', '    // Commands, telemetry and parameters of the dictionary: start typing a component name.\n')
-    if profile:
-        source = source.replace('#[fprime_main]', f'#[fprime_main({profile})]')
-    after[f'src/bin/{sequence}.rs'] = source.encode()
+    if creating:
+        if profile and f'profile_{profile}.toml' not in after:
+            raise Refused(400, f'the project has no profile_{profile}.toml')
+        source = after[source_rel].decode()
+        # `todo!()` is a macro, which restriction profiles reject: start from a body that builds.
+        source = source.replace('    todo!()\n', '    // Commands, telemetry and parameters of the dictionary: start typing a component name.\n')
+        if profile:
+            source = source.replace('#[fprime_main]', f'#[fprime_main({profile})]')
+        after[source_rel] = source.encode()
     return {rel: data for rel, data in after.items() if before.get(rel) != data}
+
+
+# `fprime-wasm test` output: cargo announces each test target, libtest reports each test.
+TEST_TARGET = re.compile(r'^\s*Running (?:tests/(?P<test>\S+?)\.rs|unittests (?P<unit>\S+)) ')
+TEST_RESULT = re.compile(r'^test (?P<name>\S+) \.\.\. (?P<status>ok|FAILED|ignored)\b')
+TEST_FAILURE = re.compile(r'^---- (?P<name>\S+) stdout ----$')
+
+
+def parse_tests(output):
+    """[{target, name, status: passed|failed|ignored, output}] from interleaved cargo/libtest output."""
+    tests, target, failing = [], None, None
+    by_key = {}
+    for line in output.splitlines():
+        m = TEST_TARGET.match(line)
+        if m:
+            target, failing = m['test'] or m['unit'], None
+            continue
+        m = TEST_RESULT.match(line)
+        if m:
+            t = {'target': target, 'name': m['name'], 'output': '',
+                 'status': {'ok': 'passed', 'FAILED': 'failed', 'ignored': 'ignored'}[m['status']]}
+            tests.append(t)
+            by_key[(target, t['name'])] = t
+            continue
+        m = TEST_FAILURE.match(line)
+        if m:
+            failing = by_key.get((target, m['name']))
+            continue
+        if failing is not None:
+            if line == 'failures:':
+                failing = None
+            elif not line.startswith('note: run with `RUST_BACKTRACE'):
+                failing['output'] += line + '\n'
+    for t in tests:
+        t['output'] = t['output'].strip()
+    return tests
+
+
+def run_tests(work, body, uid, home, connection):
+    """`fprime-wasm test`, optionally one test target (`tests/<target>.rs`) and one name filter.
+    Upstream's own name filter matches test function names only, and accepts a single filter."""
+    target, name_filter = body.get('target'), body.get('filter') or ''
+    if target is not None and not NAME.match(target):
+        raise Refused(400, 'test targets are lowercase Rust identifiers')
+    if re.search(r'\s|^-', name_filter):
+        raise Refused(400, 'the test name filter is one word')
+    cmd = ['fprime-wasm', 'test', *([name_filter] if name_filter else []), *(['--', '--test', target] if target else [])]
+    run = run_sandboxed(cmd, uid, home, work, {'CARGO_TARGET_DIR': f'{home}/target'}, connection, merge=True)
+    tests = parse_tests(run.stdout)
+    return {'ok': run.returncode == 0 and all(t['status'] != 'failed' for t in tests),
+            'exitCode': run.returncode, 'tests': tests, 'log': run.stdout[-200000:], 'command': ' '.join(cmd[1:])}
 
 
 class Builds(BaseHTTPRequestHandler):
@@ -799,7 +891,7 @@ class Builds(BaseHTTPRequestHandler):
                                     'builds': MAX_BUILDS, 'idleSeconds': IDLE_SECONDS}})
 
     def do_POST(self):
-        if self.path not in ('/build', '/scaffold'):
+        if self.path not in ('/build', '/scaffold', '/test'):
             return self._send(404, {'error': 'not found'})
         try:
             length = int(self.headers.get('Content-Length', 0))
@@ -833,6 +925,8 @@ class Builds(BaseHTTPRequestHandler):
                         return self._send(200, {'files': {k: base64.b64encode(v).decode() for k, v in created.items()},
                                                 'toolchain': TOOLCHAIN})
                     materialize(work, files, uid)
+                    if self.path == '/test':
+                        return self._send(200, {**run_tests(work, body, uid, home, self.connection), 'toolchain': TOOLCHAIN})
                     if body['kind'] == 'seq':
                         result = build_seq(work, body['target'], uid, home, self.connection, body.get('timebase'))
                     else:

@@ -157,5 +157,87 @@ class Capacity(unittest.TestCase):
             server.MAX_SESSIONS, server.MAX_SESSIONS_PER_USER = old
 
 
+TEST_OUTPUT = """\
+     Running `cargo test --test alpha`
+   Compiling proj v0.1.0 (/w)
+     Running unittests src/lib.rs (target/debug/deps/proj-1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/alpha.rs (target/debug/deps/alpha-1)
+
+running 1 test
+test runs_to_completion ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/beta.rs (target/debug/deps/beta-1)
+
+running 2 tests
+test runs_to_completion ... FAILED
+test skipped_one ... ignored
+
+failures:
+
+---- runs_to_completion stdout ----
+
+thread 'runs_to_completion' (10641) panicked at tests/beta.rs:6:1:
+sequence `beta`: step missing
+step 1 of 1 never happened
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runs_to_completion
+
+test result: FAILED. 0 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+"""
+
+
+class Tests(unittest.TestCase):
+    def test_parses_results_per_target_with_failure_output(self):
+        tests = server.parse_tests(TEST_OUTPUT)
+        self.assertEqual([(t['target'], t['name'], t['status']) for t in tests], [
+            ('alpha', 'runs_to_completion', 'passed'),
+            ('beta', 'runs_to_completion', 'failed'),
+            ('beta', 'skipped_one', 'ignored')])
+        self.assertTrue(tests[1]['output'].startswith("thread 'runs_to_completion'"))
+        self.assertIn('step 1 of 1 never happened', tests[1]['output'])
+        self.assertNotIn('RUST_BACKTRACE', tests[1]['output'])
+        self.assertEqual(tests[0]['output'], '')
+
+    def test_refuses_option_injection(self):
+        for body in ({'target': '--x'}, {'target': 'a b'}, {'filter': '--nocapture'}, {'filter': 'a b'}):
+            with self.assertRaises(server.Refused):
+                server.run_tests('/nonexistent', body, 0, '/nonexistent', None)
+
+
+class ExternalSources(unittest.TestCase):
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        os.makedirs(f'{self.home}/ra-target/out')
+        with open(f'{self.home}/ra-target/out/dictionary.rs', 'w') as f:
+            f.write('pub mod Ref {}')
+        os.symlink('/etc/passwd', f'{self.home}/ra-target/out/evil.rs')
+        self.session = server.LspSession.__new__(server.LspSession)
+        self.session.home = self.home
+
+    def read(self, path):
+        return self.session.read_source({'id': 1, 'params': {'uri': f'file://{path}'}})
+
+    def test_reads_generated_and_vendored_sources(self):
+        self.assertEqual(self.read(f'{self.home}/ra-target/out/dictionary.rs')['result']['text'], 'pub mod Ref {}')
+        vendored = next(f for f in os.listdir('/opt/fprime/vendor') if f.startswith('fprime_core'))
+        self.assertIn('result', self.read(f'/opt/fprime/vendor/{vendored}/src/lib.rs'))
+
+    def test_refuses_anything_else(self):
+        for path in ('/etc/passwd', f'{self.home}/ra-target/out/evil.rs', f'{self.home}/ra-target/../x',
+                     f'{self.home}/cargo/credentials', '/opt/fprime/server.py'):
+            self.assertIn('error', self.read(path), path)
+
+
 if __name__ == '__main__':
     unittest.main()

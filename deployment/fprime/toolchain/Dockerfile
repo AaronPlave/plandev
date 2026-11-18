@@ -13,7 +13,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-venv python3-seccomp patch \
  && rm -rf /var/lib/apt/lists/*
 
-RUN rustup target add wasm32v1-none && rustup component add rust-analyzer rust-src
+# rustfmt: rust-analyzer formats documents with it (the editor's "Format document").
+RUN rustup target add wasm32v1-none && rustup component add rust-analyzer rust-src rustfmt
 RUN cargo install --locked fprime-wasm --version "${FPRIME_WASM_VERSION}" && rm -rf /usr/local/cargo/registry
 
 # wasm-opt from binaryen releases: the `wasm-opt` crate (binaryen 116) lacks --enable-custom-page-sizes.

@@ -22,6 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ACTIONS = {
     'F Prime compile': ('fprime-compile.js', '.seq → .bin (fprime-seqgen), .rs → .wasm (fprime-wasm build + verify)'),
     'F Prime new sequence': ('fprime-new-sequence.js', 'New Rust/WASM sequence (and Cargo project) from fprime-wasm scaffolding'),
+    'F Prime test': ('fprime-test.js', 'Run a Rust/WASM sequence\'s behaviour tests (fprime-wasm test)'),
 }
 
 

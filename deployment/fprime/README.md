@@ -11,7 +11,43 @@ F Prime JSON dictionary shared by two languages in the same parcel:
 Built artifacts are read-only workspace files with a revision and provenance metadata
 (`fprimeBuild`: source and revision, input hashes, dictionary hash, artifact hash, toolchain versions
 and patches). The Action "F Prime new sequence" starts a Rust sequence, and its Cargo project if
-needed, from fprime-wasm's own scaffolding with a chosen restriction profile.
+needed, from fprime-wasm's own scaffolding with a chosen restriction profile; "F Prime test" runs a
+project's behaviour tests (`fprime-wasm test`).
+
+## Authoring workflow
+
+- **New File** offers the adaptation's file starters (`adaptation.js`): *F Prime sequence* (`.seq`),
+  *F Prime Rust sequence* (restrict profile), *F Prime Rust sequence (unrestricted)*, and *F Prime
+  sequence test*. The Rust starters run "F Prime new sequence" in the workspace's Cargo project
+  (chosen automatically when there is one, offered as a choice when there are several; with none, a
+  new project `rust/` is set up in the chosen folder) and open the new file. A mission picks the
+  profiles it offers by editing these starters; the profile stays in the source's
+  `#[fprime_main(..)]`.
+- **Managed files.** The project infrastructure the toolchain writes is marked
+  `user.managedBy: "fprime-wasm"`; SeqDev hides such files unless *Show managed files* (eye icon in
+  the file list) is on. Toolchain-controlled ones (`Cargo.toml`, `.cargo/`, `build.rs`,
+  `dictionary/`) are also read-only; `src/lib.rs` (where a mission adds helper modules), profiles,
+  `sequencer.toml` and `README.md` stay editable. Sequences, tests, helper modules users add and
+  built `out/*.wasm` are ordinary, visible files. Remove the `managedBy` key (file metadata panel) to
+  treat a file as ordinary. Projects created before this change are not marked.
+- **Tests are optional.** Upstream `fprime-wasm add` writes a test stub with every sequence; the
+  service drops it unless a test is asked for (*F Prime sequence test*, or the Action's `test`
+  parameter), and never overwrites an existing test. "F Prime test" on `src/bin/<name>.rs` or
+  `tests/<name>.rs` runs `fprime-wasm test -- --test <name>` (that file's tests; upstream's own
+  `[FILTER]` matches test *function* names and accepts only one filter); on any other project file
+  it runs all tests. No test file reports **No tests defined** and runs nothing; a filter matching
+  nothing reports **No tests ran** (failed).
+- **Editor.** "Preparing code help…" shows while rust-analyzer loads (ready = its
+  `experimental/serverStatus` reports quiescent, not just a connected socket). Dictionary command
+  completion works until then and when the service is down. *Code* menu: Go to definition (F12;
+  Fn+F12 on most Mac keyboards), Find references, Rename. Definitions in other workspace files open
+  in the editor (*Back* returns); definitions in the API generated from the dictionary or in library
+  crates open read-only in a panel below the editor (the service serves only those sources, see
+  `read_source`). *Format document* (Shift+Alt+F) uses rustfmt through rust-analyzer.
+- **Mission editor rules.** `adaptation.js` passes `lint` to `getFprimeAdaptation`: an example rule
+  rejects `FileHandling.fileManager.ShellCommand`. Mission rules and rust-analyzer diagnostics are
+  separate CodeMirror lint sources, shown together with their source (`[mission rules]`, `[rustc]`);
+  mission rules run without the language server too. Editor guidance only: builds do not enforce them.
 
 ## Pieces
 
@@ -19,7 +55,7 @@ needed, from fprime-wasm's own scaffolding with a chosen restriction profile.
 |---|---|
 | `toolchain/` | Container image and service: rust-analyzer over WebSockets (port 9257, for browsers) and builds (port 9258, internal) |
 | `docker-compose-fprime.yml` | Compose override adding the service to a deployment or development stack |
-| `seqdev/` | Builds the SeqDev adaptation and the two Action bundles from `@nasa-jpl/plandev-sequence-languages` |
+| `seqdev/` | Builds the SeqDev adaptation and the three Action bundles from `@nasa-jpl/plandev-sequence-languages` |
 | `setup.py` | Installs dictionary, adaptation, Actions, parcel and workspace into a running PlanDev |
 
 The editor languages live in `plandev-sequence-languages` (`fprime-seq`, `fprime-rust`); the dictionary
@@ -174,6 +210,11 @@ the patch, update the profile checksums, rebuild, and run `toolchain/test/run.sh
   bare enum constants. Operational argument ranges are not in F Prime dictionaries and are not checked.
 - rust-analyzer reads the dictionary copy inside the Cargo project, while builds use the parcel's
   dictionary. When they differ, the build report says so.
-- Go-to-definition into generated code (`dictionary.rs`) cannot open in SeqDev.
+- `fprime-wasm test [FILTERS]...` (0.1.10) passes every filter to `cargo test`, which accepts only
+  one, so the Action takes a single name filter. Upstream reports a run with no tests, or no
+  matching tests, as success; the Action reports those as such instead.
+- Restriction profiles reject calls to helper functions, so helper modules only help unrestricted
+  (`#[fprime_main]`) sequences.
+- Deleting a Cargo project folder needs its read-only managed files unlocked first (workspace rule).
 - Only crates vendored in the image are available. Projects needing others need a custom image.
 - One activity → one Rust sequence file; multi-activity Rust programs are not composed.
