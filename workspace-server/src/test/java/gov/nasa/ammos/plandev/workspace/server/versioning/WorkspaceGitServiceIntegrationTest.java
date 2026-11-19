@@ -2490,6 +2490,22 @@ class WorkspaceGitServiceIntegrationTest {
     }
 
     @Test
+    void fileHistoryListsTheFilesCommitsWithTheirRevisionsAndContent() throws Exception {
+      bindings.saveAndGetEtag(WS1, "a.txt", "v1");
+      revise("a.txt", "");
+      bindings.saveAndGetEtag(WS1, "b.txt", "unrelated");
+      bindings.saveAndGetEtag(WS1, "a.txt", "v2");
+
+      final var history = fs.fileHistory(WS1, Path.of("a.txt"), 10);
+      assertEquals(List.of("Update a.txt", "Update a.txt"), history.stream().map(e -> e.message()).toList());
+      assertEquals(List.of(List.of(), List.of("a")), history.stream().map(e -> e.revisions()).toList());
+      assertTrue(history.stream().allMatch(e -> e.contentChanged()));
+      assertEquals(Optional.of("v1"), fs.readFileAtCommit(WS1, Path.of("a.txt"), history.get(1).commit()).map(String::new));
+      assertEquals(Optional.empty(), fs.readFileAtCommit(WS1, Path.of("a.txt"), "not-a-commit"));
+      assertEquals(1, fs.fileHistory(WS1, Path.of("a.txt"), 1).size());
+    }
+
+    @Test
     void revisionsFollowRenamesButNotCopiesOrRecreation() throws Exception {
       bindings.saveAndGetEtag(WS1, "a.txt", "v1");
       revise("a.txt", "");

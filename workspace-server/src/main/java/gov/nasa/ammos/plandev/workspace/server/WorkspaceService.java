@@ -407,6 +407,21 @@ public interface WorkspaceService {
   throws NoSuchFileException, WorkspaceFileOpException, IOException;
 
   /**
+   * The commits that changed the file or its metadata, newest first, at most {@code limit}, at the file's current path.
+   * @throws NoSuchFileException If the file does not exist
+   * @throws WorkspaceFileOpException If "filePath" refers to a metadata file or directory
+   */
+  List<WorkspaceRevisionService.HistoryEntry> fileHistory(final Workspace workspace, final Path filePath, final int limit)
+  throws NoSuchFileException, WorkspaceFileOpException, IOException, org.eclipse.jgit.api.errors.GitAPIException;
+
+  /**
+   * The file's content as of one of the workspace's commits, or empty if there is no such commit or the file was not
+   * in it.
+   */
+  Optional<byte[]> readFileAtCommit(final Workspace workspace, final Path filePath, final String commit)
+  throws NoSuchFileException, WorkspaceFileOpException, IOException;
+
+  /**
    * The content and committed metadata of one of the file's revisions, or empty if it has no revision by that name.
    * @param workspace the workspace the file lives in
    * @param filePath the path to the file

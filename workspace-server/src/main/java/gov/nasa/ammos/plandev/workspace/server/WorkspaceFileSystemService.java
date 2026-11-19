@@ -1033,6 +1033,20 @@ public class WorkspaceFileSystemService implements WorkspaceService {
   }
 
   @Override
+  public List<WorkspaceRevisionService.HistoryEntry> fileHistory(final Workspace workspace, final Path filePath, final int limit)
+  throws NoSuchFileException, WorkspaceFileOpException, IOException, org.eclipse.jgit.api.errors.GitAPIException
+  {
+    return revisions.history(workspace, WorkspacePaths.resolveRevisionGitPath(workspace, filePath), limit);
+  }
+
+  @Override
+  public Optional<byte[]> readFileAtCommit(final Workspace workspace, final Path filePath, final String commit)
+  throws NoSuchFileException, WorkspaceFileOpException, IOException
+  {
+    return revisions.readAtCommit(workspace, WorkspacePaths.resolveRevisionGitPath(workspace, filePath), commit);
+  }
+
+  @Override
   public Optional<WorkspaceRevisionService.HistoricalFile> readRevision(final Workspace workspace, final Path filePath, final String name)
   throws NoSuchFileException, WorkspaceFileOpException, IOException
   {

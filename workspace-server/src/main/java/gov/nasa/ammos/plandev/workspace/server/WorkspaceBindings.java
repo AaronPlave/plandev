@@ -174,6 +174,7 @@ public class WorkspaceBindings implements Plugin {
       // Versioning Paths
       // Register the fixed segments first: "/versioning/{workspaceId}" would otherwise match "restore" or "metadata".
       path("/versioning/metadata/{workspaceId}/<path>", () -> ApiBuilder.get(this::getRevisionMetadata));
+      path("/versioning/history/{workspaceId}/<path>", () -> ApiBuilder.get(this::getFileHistory));
       path("/versioning/restore/{workspaceId}/<path>", () -> ApiBuilder.post(this::restoreRevision));
       path("/versioning/{workspaceId}/<path>", () -> {
         ApiBuilder.get(this::getFileRevision);
@@ -2152,6 +2153,69 @@ public class WorkspaceBindings implements Plugin {
     } catch (SQLException sql) {
       final var fe = new FormattedError(AerieService.WORKSPACE_SERVER, sql);
       logger.warn("GET REVISION: SQL EXCEPTION: {}", fe);
+      context.status(500).json(fe);
+    }
+  }
+
+  /**
+   * A file's change history from the workspace's Git log (every save, metadata update, restore), newest first.
+   *
+   * Returns:
+   *  - With query param "commit": the file's content as of that commit.
+   *  - Otherwise: {"history": [{commit, message, author, at, contentChanged, revisions: [names]}]}, at most "limit"
+   *    entries (default 100, at most 1000). History before a rename or move of the file is not included.
+   */
+  private void getFileHistory(Context context) {
+    final var pathInfo = PathInformation.of(context);
+    if (!checkPermissions(context, pathInfo.workspaceId, WorkspaceAction.read_file_directory)) {
+      return;
+    }
+    try {
+      final var workspace = workspaceService.getWorkspace(pathInfo.workspaceId);
+      final var commit = context.queryParam("commit");
+      if (commit != null) {
+        final var content = workspaceService.readFileAtCommit(workspace, pathInfo.filePath, commit);
+        if (content.isEmpty()) {
+          context.status(404).json(new WorkspaceFormattedError(new MalformedRequest(
+              "Unable to read file history", "%s is not in commit %s".formatted(pathInfo.filePath, commit))));
+          return;
+        }
+        context.header("x-render-type", workspaceService.getFileType(pathInfo.filePath).name());
+        context.contentType(ContentType.OCTET_STREAM);
+        context.status(200).result(content.get());
+        return;
+      }
+      int limit = 100;
+      final var limitParam = context.queryParam("limit");
+      if (limitParam != null) {
+        try {
+          limit = Math.clamp(Integer.parseInt(limitParam), 1, 1000);
+        } catch (NumberFormatException nfe) {
+          context.status(400).json(new WorkspaceFormattedError(new MalformedRequest(
+              "Unable to read file history", "`limit` must be an integer")));
+          return;
+        }
+      }
+      final var list = Json.createArrayBuilder();
+      workspaceService.fileHistory(workspace, pathInfo.filePath, limit).forEach(e -> list.add(e.toJson()));
+      context.status(200).json(Json.createObjectBuilder().add("history", list).build().toString());
+    } catch (WorkspaceFileOpException wfe) {
+      context.status(400).json(new WorkspaceFormattedError(wfe, "Could not get history of " + pathInfo.filePath));
+    } catch (NoSuchFileException nsf) {
+      context.status(404).json(new WorkspaceFormattedError(nsf));
+    } catch (NoSuchWorkspaceException nsw) {
+      context.status(404).json(new WorkspaceFormattedError(nsw));
+    } catch (IOException ioe) {
+      final var fe = new FormattedError(AerieService.WORKSPACE_SERVER, ioe);
+      logger.warn("GET FILE HISTORY: IO EXCEPTION: {}", fe);
+      context.status(500).json(fe);
+    } catch (org.eclipse.jgit.api.errors.GitAPIException gae) {
+      final var fe = new FormattedError(AerieService.WORKSPACE_SERVER, "GIT_ERROR", gae);
+      logger.warn("GET FILE HISTORY: GIT EXCEPTION: {}", fe);
+      context.status(500).json(fe);
+    } catch (SQLException sql) {
+      final var fe = new FormattedError(AerieService.WORKSPACE_SERVER, sql);
+      logger.warn("GET FILE HISTORY: SQL EXCEPTION: {}", fe);
       context.status(500).json(fe);
     }
   }

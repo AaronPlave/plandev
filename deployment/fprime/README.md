@@ -9,8 +9,10 @@ F Prime JSON dictionary shared by two languages in the same parcel:
 | Rust/WASM `src/bin/<name>.rs` ([fprime-wasm](https://github.com/fprime-community/fprime-wasm)) | rust-analyzer (completion, hover, go-to-definition, restriction-profile diagnostics) | `fprime-wasm build` (profile enforced) + `verify` → `<project>/out/<name>.wasm` |
 
 Built artifacts are read-only workspace files with a revision and provenance metadata
-(`fprimeBuild`: source and revision, input hashes, dictionary hash, artifact hash, toolchain versions
-and patches). The Action "F Prime new sequence" starts a Rust sequence, and its Cargo project if
+(`fprimeBuild`: source and revision, input hashes, dictionary hash, artifact hash and size, verify
+result, toolchain versions and patches). SeqDev's Metadata panel compares those hashes with the saved
+files ("source changed since this build" means rebuilt output would differ, not that the artifact is
+invalid) and finds the built source among the file's saved versions to diff it. The Action "F Prime new sequence" starts a Rust sequence, and its Cargo project if
 needed, from fprime-wasm's own scaffolding with a chosen restriction profile; "F Prime test" runs a
 project's behaviour tests (`fprime-wasm test`); "F Prime project check" brings an existing project up
 to the conventions below, previewing every change first.
@@ -246,6 +248,20 @@ upstream yet; `smoke.sh` builds and tests a project without entries.
 To move to another fprime-wasm release: update the versions in `vendor-manifest/Cargo.toml` and the
 Dockerfile ARG, regenerate `vendor-manifest/Cargo.lock` (`cargo generate-lockfile`), update or drop
 the patch, update the profile checksums, rebuild, and run `toolchain/test/run.sh`.
+
+## Working outside SeqDev (VS Code, command line)
+
+A Rust sequence project is a conventional Cargo project: `src/bin/<name>.rs` sequences auto-discovered,
+the dictionary copy and restriction profiles as plain files, nothing generated or rewritten only for
+SeqDev. Download the folder (or upload one with Import) and edit it with rust-analyzer as usual;
+SeqDev reads whatever is saved. Two things differ from stock tooling:
+
+- `fprime-wasm build` and `verify` work with stock fprime-wasm 0.1.10. `fprime-wasm test` does not:
+  without the host-stub patch above, a host `cargo test` cannot link `#![no_std]` sequences unless
+  each has a `[[bin]] required-features = ["wasm"]` entry. Run the tests through the "F Prime test"
+  Action, apply `toolchain/fprime_macros-0.1.10-host-stub.patch` to your vendored fprime_macros, or add the entries.
+- Artifacts built outside SeqDev carry no `fprimeBuild` metadata, so SeqDev shows no provenance for
+  them rather than guessing; rebuild with the "F Prime compile" Action to record it.
 
 ## Known limitations
 

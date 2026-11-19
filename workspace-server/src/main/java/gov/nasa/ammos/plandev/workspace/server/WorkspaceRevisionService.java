@@ -329,6 +329,70 @@ public final class WorkspaceRevisionService {
     }
   }
 
+  /**
+   * One commit of a file's history. {@code contentChanged} is false when only its metadata changed; {@code revisions}
+   * are the names of the file's revisions recorded on that commit.
+   */
+  public record HistoryEntry(String commit, String message, String author, Instant at, boolean contentChanged, List<String> revisions) {
+    public JsonObject toJson() {
+      final var names = Json.createArrayBuilder();
+      revisions.forEach(names::add);
+      return Json.createObjectBuilder()
+                 .add("commit", commit)
+                 .add("message", message)
+                 .add("author", author)
+                 .add("at", at.toString())
+                 .add("contentChanged", contentChanged)
+                 .add("revisions", names)
+                 .build();
+    }
+  }
+
+  /**
+   * The commits that changed a file or its sidecar, newest first, at most {@code limit}. Follows the path the file has
+   * now: history from before a rename or move ends at the commit that moved it. Lock-free.
+   */
+  List<HistoryEntry> history(final Workspace workspace, final String key, final int limit) throws IOException, GitAPIException {
+    if (!gitService.isManaged(workspace)) return List.of();
+    final var revisionsByCommit = new HashMap<ObjectId, List<String>>();
+    for (final var revision : list(workspace, key)) {
+      revisionsByCommit.computeIfAbsent(revision.commit(), c -> new ArrayList<>()).add(revision.name());
+    }
+    try (final var git = open(workspace); final var walk = new RevWalk(git.getRepository())) {
+      final var head = git.getRepository().resolve(Constants.HEAD);
+      if (head == null) return List.of();
+      final var reader = walk.getObjectReader();
+      final var out = new ArrayList<HistoryEntry>();
+      for (final var logged : git.log().add(head).addPath(key).addPath(sidecarKey(key)).setMaxCount(limit).call()) {
+        final var commit = walk.parseCommit(logged);
+        final var here = fileBlobIds(reader, commit.getTree(), key);
+        final var before = commit.getParentCount() == 0
+            ? null
+            : fileBlobIds(reader, walk.parseCommit(commit.getParent(0)).getTree(), key);
+        final var contentChanged = here == null || before == null || !here.contentBlobId().equals(before.contentBlobId());
+        final var author = commit.getAuthorIdent();
+        out.add(new HistoryEntry(commit.name(), commit.getShortMessage(), author.getName(), author.getWhenAsInstant(),
+                                 contentChanged, revisionsByCommit.getOrDefault(commit, List.of())));
+      }
+      return out;
+    }
+  }
+
+  /** The file's content as of a commit of this workspace, or empty if the commit is unknown or lacks the file. Lock-free. */
+  Optional<byte[]> readAtCommit(final Workspace workspace, final String key, final String commitId) throws IOException {
+    if (!gitService.isManaged(workspace) || !ObjectId.isId(commitId)) return Optional.empty();
+    try (final var repo = open(workspace).getRepository(); final var walk = new RevWalk(repo)) {
+      final RevCommit commit;
+      try {
+        commit = walk.parseCommit(ObjectId.fromString(commitId));
+      } catch (org.eclipse.jgit.errors.MissingObjectException | IncorrectObjectTypeException e) {
+        return Optional.empty();
+      }
+      final var blobIds = fileBlobIds(walk.getObjectReader(), commit.getTree(), key);
+      return blobIds == null ? Optional.empty() : Optional.of(repo.open(blobIds.contentBlobId()).getBytes());
+    }
+  }
+
   Optional<Revision> find(final Workspace workspace, final String key, final String name) throws IOException {
     return list(workspace, key).stream().filter(r -> r.name().equals(name)).findFirst();
   }

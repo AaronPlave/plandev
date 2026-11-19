@@ -145,7 +145,19 @@ export async function main(parameters, settings, actionsAPI) {
       await actionsAPI.setFileMetadata(path, { readOnly: false }).catch(() => undefined);
       // Binary-safe: the workspace stores the bytes as given (writeFile is typed as string only).
       await actionsAPI.writeFile(path, new Uint8Array(bytes), true);
-      await actionsAPI.setFileMetadata(path, { readOnly: true, user: { fprimeBuild: { ...provenance, sha256: sha256(bytes) } } });
+      const verified = build.verify?.modules?.[0];
+      await actionsAPI.setFileMetadata(path, {
+        readOnly: true,
+        user: {
+          fprimeBuild: {
+            ...provenance,
+            bytes: bytes.length,
+            sha256: sha256(bytes),
+            // Rust: the module loaded in spacewasm within sequencer.toml limits (`.seq` has no verify step).
+            verify: verified ? { ok: !!verified.passed, totalBytes: verified.sizes?.total ?? null } : null,
+          },
+        },
+      });
       const revision = await actionsAPI.createFileRevision(path, {
         message: `Built from ${source.path}${source.revision ? ` @ ${source.revision}` : ' (working copy)'}`,
       });
