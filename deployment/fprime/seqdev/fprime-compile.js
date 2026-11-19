@@ -6,7 +6,7 @@
 // copy (what rust-analyzer reads too) and is refused when that copy differs from the parcel's.
 // Built by `npm run build` into dist/fprime-compile.js (bundling the shared `.seq` validator).
 import { fprimeSeqParser, validateFprimeSeq } from '@nasa-jpl/plandev-sequence-languages';
-import { b64, callToolchain, readCargoProject, readParcelDictionary, sha256 } from './project.js';
+import { b64, callToolchain, readCargoProject, readParcelDictionary, savedSourceCommit, sha256 } from './project.js';
 
 export const parameterDefinitions = {
   source: {
@@ -126,14 +126,22 @@ export async function main(parameters, settings, actionsAPI) {
   const projectPrefix = isRust ? source.path.slice(0, source.path.length - target.length) : '';
   build.diagnostics = build.diagnostics.map(d => ({ ...d, file: isRust ? projectPrefix + d.file : source.path }));
 
+  const sourceSha256 = sha256(sourceText);
   const provenance = {
     builtAt: new Date().toISOString(),
     dictionary: dictionaryInfo,
-    // Metadata keys may not contain '.', so file names go in values.
-    inputs: Object.entries(build.inputs).map(([path, sha]) => ({ path, sha256: sha })),
+    // Metadata keys may not contain '.', so file names go in values. Cargo compiles each
+    // src/bin/*.rs as its own crate and tests/ only for `fprime-wasm test`, so other sequences and
+    // the tests are sent but are not inputs of this artifact.
+    inputs: Object.entries(build.inputs)
+      .filter(([path]) => !isRust || path === target || !/^(src\/bin\/[^/]+\.rs|tests\/.+)$/.test(path))
+      .map(([path, sha]) => ({ path, sha256: sha })),
+    producer: { kind: 'action', name: 'F Prime compile', runId: actionsAPI.config.ACTION_RUN_ID ?? null },
     source: source.path,
+    // The saved version built, exactly: its commit in the workspace history (working-copy builds).
+    sourceCommit: source.revision == null ? await savedSourceCommit(actionsAPI, source.path, sourceSha256) : null,
     sourceRevision: source.revision ?? null,
-    sourceSha256: sha256(sourceText),
+    sourceSha256,
     toolchain: build.toolchain,
   };
   const written = [];

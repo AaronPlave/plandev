@@ -114,3 +114,20 @@ export async function callToolchain(settings, actionsAPI, endpoint, body) {
   const result = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
   return { ok: response.ok, result, status: response.status };
 }
+
+/**
+ * The workspace history commit holding the source's saved content, when that content is what was
+ * read (its SHA-256 matches); null if the file changed in between or history is unavailable.
+ */
+export async function savedSourceCommit(actionsAPI, path, contentSha256) {
+  const url = `/versioning/history/${actionsAPI.workspaceId}/${path.split('/').map(encodeURIComponent).join('/')}`;
+  try {
+    const { history } = await (await actionsAPI.requestWorkspace(`${url}?limit=50`, 'GET')).json();
+    const latest = history.find(entry => entry.contentChanged);
+    if (!latest) return null;
+    const content = await (await actionsAPI.requestWorkspace(`${url}?commit=${latest.commit}`, 'GET')).arrayBuffer();
+    return sha256(Buffer.from(content)) === contentSha256 ? latest.commit : null;
+  } catch {
+    return null;
+  }
+}
